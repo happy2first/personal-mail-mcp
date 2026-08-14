@@ -1,0 +1,23 @@
+name: Worker build diagnostic
+
+on:
+  push:
+    branches:
+      - diagnostics/worker-build-20260815
+    paths:
+      - ".github/workflows/worker-build-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx wrangler deploy --dry-run --outdir dist
