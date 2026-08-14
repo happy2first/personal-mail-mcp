@@ -1,4 +1,4 @@
-name: Cloudflare MCP OAuth discovery probe
+name: Cloudflare MCP OAuth exact metadata probe
 
 on:
   push:
@@ -12,20 +12,13 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe MCP OAuth discovery
+      - name: Probe exact resource metadata URL
         shell: bash
         run: |
-          for accept in "application/json, text/event-stream" "text/event-stream"; do
-            echo "=== GET /mcp Accept: $accept ==="
-            curl --silent --show-error               --dump-header -               --output response-body.txt               --header "Accept: $accept"               "https://personal-mail-mcp.esmeknight.workers.dev/mcp"
-            head -c 1000 response-body.txt
-            echo
-          done
-
-          for url in             "https://personal-mail-mcp.esmeknight.workers.dev/.well-known/oauth-protected-resource/mcp"             "https://personal-mail-mcp.esmeknight.workers.dev/.well-known/oauth-protected-resource"             "https://personal-mail-mcp.esmeknight.workers.dev/.well-known/cloudflare-access-protected-resource/"             "https://liao8top.cloudflareaccess.com/.well-known/oauth-authorization-server"
+          for url in             "https://personal-mail-mcp.esmeknight.workers.dev/.well-known/cloudflare-access-protected-resource/mcp"             "https://personal-mail-mcp.esmeknight.workers.dev/.well-known/oauth-protected-resource/mcp"
           do
             echo "=== $url ==="
-            curl --silent --show-error               --dump-header -               --output metadata.json               "$url"
+            curl --silent --show-error --dump-header - --output metadata.json "$url"
             jq . metadata.json 2>/dev/null || head -c 2000 metadata.json
             echo
           done
