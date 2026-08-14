@@ -1,5 +1,5 @@
-import { McpServer } from "@modelcontextprotocol/server";
-import { createMcpHandler } from "agents/mcp/server";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { createLegacyMcpHandler } from "agents/mcp";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import nodemailer from "nodemailer";
@@ -2137,18 +2137,14 @@ export default {
     /*
      * MCP Streamable HTTP
      */
-    return createMcpHandler(
-      () =>
-        createServer(
-          env,
-        ),
-
+    return createLegacyMcpHandler(
+      createServer(env),
       {
         route:
           "/mcp",
 
-        responseMode:
-          "json",
+        enableJsonResponse:
+          true,
       },
     )(
       request,
