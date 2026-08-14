@@ -9,7 +9,6 @@
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
     "agents": "0.20.1",
-    "imapflow": "1.6.5",
     "jose": "6.2.8",
     "mailparser": "3.9.15",
     "nodemailer": "9.0.5",

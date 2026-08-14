@@ -1,10 +1,13 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { createMcpHandler } from "agents/mcp/server";
-import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import nodemailer from "nodemailer";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { z } from "zod";
+import {
+  WorkerImapClient,
+  WorkerSmtpTransport,
+} from "./mail-sockets.js";
 
 const MAX_MAIL_BYTES = 8 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -14,30 +17,6 @@ const must = (v, n) => {
   if (!v) throw new Error(`缺少配置：${n}`);
   return v;
 };
-
-function normalizeTeamDomain(value) {
-  const raw = must(
-    value,
-    "TEAM_DOMAIN",
-  )
-    .trim()
-    .replace(/\/+$/, "");
-
-  const candidate =
-    /^https?:\/\//i.test(raw)
-      ? raw
-      : `https://${raw}`;
-
-  const url = new URL(candidate);
-
-  if (url.protocol !== "https:") {
-    throw new Error(
-      "TEAM_DOMAIN 必须使用 https",
-    );
-  }
-
-  return url.origin;
-}
 
 const result = (data) => ({
   content: [
@@ -84,7 +63,7 @@ function accountConfig(env, account = "qq") {
 async function withImap(env, account, fn) {
   const cfg = accountConfig(env, account);
 
-  const client = new ImapFlow({
+  const client = new WorkerImapClient({
     host: cfg.imap.host,
     port: cfg.imap.port,
     secure: cfg.imap.secure,
@@ -125,28 +104,12 @@ async function withImap(env, account, fn) {
 function smtp(env, account = "qq") {
   const cfg = accountConfig(env, account);
 
-  const transporter = nodemailer.createTransport({
+  const transporter = new WorkerSmtpTransport({
     host: cfg.smtp.host,
     port: cfg.smtp.port,
-    secure: cfg.smtp.secure,
-
-    auth: {
-      user: cfg.email,
-      pass: cfg.authCode,
-    },
-
-    logger: false,
-    debug: false,
-
-    connectionTimeout: 15000,
-    greetingTimeout: 10000,
-    socketTimeout: 30000,
-
-    /*
-     * 禁止邮件参数让 Worker 自己去读取文件或 URL。
-     */
-    disableFileAccess: true,
-    disableUrlAccess: true,
+    secureTransport: "on",
+    email: cfg.email,
+    authCode: cfg.authCode,
   });
 
   return {
@@ -392,9 +355,10 @@ async function verifyAccess(
   env,
 ) {
   const team =
-    normalizeTeamDomain(
+    must(
       env.TEAM_DOMAIN,
-    );
+      "TEAM_DOMAIN",
+    ).replace(/\/$/, "");
 
   const aud =
     must(
@@ -416,8 +380,7 @@ async function verifyAccess(
   const JWKS =
     createRemoteJWKSet(
       new URL(
-        "/cdn-cgi/access/certs",
-        team,
+        `${team}/cdn-cgi/access/certs`,
       ),
     );
 
@@ -1998,3 +1961,186 @@ function createServer(env) {
                 "未找到草稿箱",
               );
             }
+
+            const t =
+              nodemailer.createTransport(
+                {
+                  streamTransport:
+                    true,
+
+                  buffer:
+                    true,
+
+                  newline:
+                    "windows",
+
+                  disableFileAccess:
+                    true,
+
+                  disableUrlAccess:
+                    true,
+                },
+              );
+
+            const info =
+              await t.sendMail(
+                {
+                  from:
+                    cfg.email,
+
+                  to:
+                    p.to,
+
+                  cc:
+                    p.cc,
+
+                  bcc:
+                    p.bcc,
+
+                  subject:
+                    p.subject,
+
+                  text:
+                    p.text,
+
+                  html:
+                    p.html,
+
+                  attachments:
+                    buildAttachments(
+                      p.attachments,
+                    ),
+
+                  disableFileAccess:
+                    true,
+
+                  disableUrlAccess:
+                    true,
+                },
+              );
+
+            return {
+              success: true,
+
+              draftFolder:
+                drafts.path,
+
+              result:
+                await c.append(
+                  drafts.path,
+                  info.message,
+                  [
+                    "\\Draft",
+                  ],
+                  new Date(),
+                ),
+            };
+          },
+        ),
+      ),
+  );
+
+  return s;
+}
+
+/*
+ * Worker HTTP 入口
+ */
+export default {
+  async fetch(
+    request,
+    env,
+    ctx,
+  ) {
+    const url =
+      new URL(
+        request.url,
+      );
+
+    if (
+      url.pathname !==
+        "/mcp" &&
+      url.pathname !==
+        "/health"
+    ) {
+      return new Response(
+        "Not Found",
+        {
+          status: 404,
+        },
+      );
+    }
+
+    /*
+     * 即使 Cloudflare Access
+     * 已挡在 Worker 前面，
+     * Worker 仍主动校验 Access JWT。
+     */
+    let identity;
+
+    try {
+      identity =
+        await verifyAccess(
+          request,
+          env,
+        );
+    } catch (e) {
+      return Response.json(
+        {
+          error:
+            "access_denied",
+
+          message:
+            e instanceof Error
+              ? e.message
+              : String(e),
+        },
+        {
+          status: 403,
+        },
+      );
+    }
+
+    /*
+     * 浏览器测试地址
+     */
+    if (
+      url.pathname ===
+      "/health"
+    ) {
+      return Response.json({
+        ok: true,
+
+        service:
+          "personal-mail-mcp",
+
+        user:
+          identity.email ||
+          identity.sub ||
+          "authenticated",
+      });
+    }
+
+    /*
+     * MCP Streamable HTTP
+     */
+    return createMcpHandler(
+      () =>
+        createServer(
+          env,
+        ),
+
+      {
+        route:
+          "/mcp",
+
+        responseMode:
+          "json",
+      },
+    )(
+      request,
+      env,
+      ctx,
+    );
+  },
+};
