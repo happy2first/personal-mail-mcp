@@ -7,7 +7,7 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "agents": "0.20.1",
     "imapflow": "1.6.5",
     "jose": "6.2.8",
