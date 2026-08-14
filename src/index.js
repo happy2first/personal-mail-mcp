@@ -15,6 +15,30 @@ const must = (v, n) => {
   return v;
 };
 
+function normalizeTeamDomain(value) {
+  const raw = must(
+    value,
+    "TEAM_DOMAIN",
+  )
+    .trim()
+    .replace(/\/+$/, "");
+
+  const candidate =
+    /^https?:\/\//i.test(raw)
+      ? raw
+      : `https://${raw}`;
+
+  const url = new URL(candidate);
+
+  if (url.protocol !== "https:") {
+    throw new Error(
+      "TEAM_DOMAIN 必须使用 https",
+    );
+  }
+
+  return url.origin;
+}
+
 const result = (data) => ({
   content: [
     {
@@ -368,10 +392,9 @@ async function verifyAccess(
   env,
 ) {
   const team =
-    must(
+    normalizeTeamDomain(
       env.TEAM_DOMAIN,
-      "TEAM_DOMAIN",
-    ).replace(/\/$/, "");
+    );
 
   const aud =
     must(
@@ -393,7 +416,8 @@ async function verifyAccess(
   const JWKS =
     createRemoteJWKSet(
       new URL(
-        `${team}/cdn-cgi/access/certs`,
+        "/cdn-cgi/access/certs",
+        team,
       ),
     );
 
