@@ -1,4 +1,4 @@
-name: Cloudflare Managed OAuth DCR probe
+name: Cloudflare MCP OAuth discovery probe
 
 on:
   push:
@@ -12,25 +12,20 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe dynamic client registration
+      - name: Probe MCP OAuth discovery
         shell: bash
         run: |
-          payload=$(jq -n '{
-            redirect_uris: ["https://oauth-callbacks.cloudflareaccess.com/cdn-cgi/access/outbound-oauth-callback"],
-            token_endpoint_auth_method: "none",
-            grant_types: ["authorization_code"],
-            response_types: ["code"],
-            resource: "https://personal-mail-mcp.esmeknight.workers.dev/mcp"
-          }')
-          status=$(curl --silent --show-error             --output response.json             --write-out "%{http_code}"             --request POST             --header "Content-Type: application/json"             --data "$payload"             "https://liao8top.cloudflareaccess.com/cdn-cgi/access/oauth/registration")
-          echo "HTTP_STATUS=$status"
-          jq '{
-            error,
-            error_description,
-            message,
-            client_id_present: (.client_id != null),
-            redirect_uris,
-            token_endpoint_auth_method
-          }' response.json
-          test "$status" -ge 200
-          test "$status" -lt 300
+          for accept in "application/json, text/event-stream" "text/event-stream"; do
+            echo "=== GET /mcp Accept: $accept ==="
+            curl --silent --show-error               --dump-header -               --output response-body.txt               --header "Accept: $accept"               "https://personal-mail-mcp.esmeknight.workers.dev/mcp"
+            head -c 1000 response-body.txt
+            echo
+          done
+
+          for url in             "https://personal-mail-mcp.esmeknight.workers.dev/.well-known/oauth-protected-resource/mcp"             "https://personal-mail-mcp.esmeknight.workers.dev/.well-known/oauth-protected-resource"             "https://personal-mail-mcp.esmeknight.workers.dev/.well-known/cloudflare-access-protected-resource/"             "https://liao8top.cloudflareaccess.com/.well-known/oauth-authorization-server"
+          do
+            echo "=== $url ==="
+            curl --silent --show-error               --dump-header -               --output metadata.json               "$url"
+            jq . metadata.json 2>/dev/null || head -c 2000 metadata.json
+            echo
+          done
