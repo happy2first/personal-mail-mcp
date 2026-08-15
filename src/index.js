@@ -2058,6 +2058,15 @@ export default {
       );
 
     if (
+      url.pathname === "/"
+    ) {
+      return Response.json({
+        ok: true,
+        service: "personal-mail-mcp",
+      });
+    }
+
+    if (
       url.pathname !==
         "/mcp" &&
       url.pathname !==
