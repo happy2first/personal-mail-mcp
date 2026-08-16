@@ -47,17 +47,13 @@ function prefixFor(id) {
 }
 
 export function listAccountIds(env) {
-  let ids;
-  if (env.MAIL_ACCOUNTS && String(env.MAIL_ACCOUNTS).trim()) {
-    ids = String(env.MAIL_ACCOUNTS)
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean);
-  } else if (env.MAIL_QQ_EMAIL && env.MAIL_QQ_AUTH_CODE) {
-    // 旧版兼容：未配置 MAIL_ACCOUNTS 时继续使用现有 QQ 变量。
-    ids = ["qq"];
-  } else {
-    ids = [];
+  const ids = must(env.MAIL_ACCOUNTS, "MAIL_ACCOUNTS")
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  if (!ids.length) {
+    throw new Error("MAIL_ACCOUNTS 至少需要配置一个邮箱账号 ID");
   }
 
   const seen = new Set();
@@ -77,32 +73,14 @@ export function getAccount(env, id) {
   const actualId = ids.find((x) => x.toLowerCase() === accountId.toLowerCase());
   if (!actualId) throw new Error(`未配置邮箱账号：${accountId}`);
 
-  // 旧版 QQ 兼容模式。
-  if (!env.MAIL_ACCOUNTS && actualId.toLowerCase() === "qq") {
-    return {
-      id: "qq",
-      label: "QQ邮箱",
-      provider: "qq",
-      email: must(env.MAIL_QQ_EMAIL, "MAIL_QQ_EMAIL"),
-      credential: must(env.MAIL_QQ_AUTH_CODE, "MAIL_QQ_AUTH_CODE"),
-      imap: { ...PROVIDERS.qq.imap },
-      smtp: { ...PROVIDERS.qq.smtp },
-      legacy: true,
-    };
-  }
-
   const prefix = prefixFor(actualId);
-  const legacyQq = actualId.toLowerCase() === "qq" && env.MAIL_QQ_AUTH_CODE;
-  const provider = String(env[`${prefix}_PROVIDER`] || (legacyQq ? "qq" : "")).trim().toLowerCase();
+  const provider = must(env[`${prefix}_PROVIDER`], `${prefix}_PROVIDER`).toLowerCase();
   if (!["qq", "163", "gmail", "custom"].includes(provider)) {
-    throw new Error(`不支持的邮箱 Provider：${provider || "未配置"}`);
+    throw new Error(`不支持的邮箱 Provider：${provider}`);
   }
 
   const email = must(env[`${prefix}_EMAIL`], `${prefix}_EMAIL`);
-  const credential = must(
-    env[`${prefix}_CREDENTIAL`] || (legacyQq ? env.MAIL_QQ_AUTH_CODE : undefined),
-    `${prefix}_CREDENTIAL`,
-  );
+  const credential = must(env[`${prefix}_CREDENTIAL`], `${prefix}_CREDENTIAL`);
   const label = String(env[`${prefix}_LABEL`] || PROVIDERS[provider]?.label || actualId).trim();
 
   let imap;
@@ -131,7 +109,6 @@ export function getAccount(env, id) {
     credential,
     imap,
     smtp,
-    legacy: false,
   };
 }
 
