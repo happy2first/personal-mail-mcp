@@ -17,10 +17,16 @@ Cloudflare Worker 上的多账号、配置驱动 IMAP/SMTP MCP 服务。
 
 ### 1. 账号列表
 
-普通 Variable：
+必须配置普通 Variable：
 
 ```text
 MAIL_ACCOUNTS=qq,163main,gmail
+```
+
+账号 ID 代表具体邮箱账号实例，不代表 Provider。一个 Provider 可以配置多个账号，例如：
+
+```text
+MAIL_ACCOUNTS=163main,163backup,qq,gmail
 ```
 
 账号 ID 只使用英文字母、数字和下划线；`all` 为保留字。
@@ -36,13 +42,31 @@ MAIL_<ID>_EMAIL=邮箱地址        # 建议 Secret
 MAIL_<ID>_CREDENTIAL=授权码或应用专用密码  # Secret
 ```
 
-示例：
+例如 163：
 
 ```text
 MAIL_163MAIN_PROVIDER=163
 MAIL_163MAIN_LABEL=我的163邮箱
 MAIL_163MAIN_EMAIL=***
 MAIL_163MAIN_CREDENTIAL=***
+```
+
+例如 QQ：
+
+```text
+MAIL_QQ_PROVIDER=qq
+MAIL_QQ_LABEL=QQ邮箱
+MAIL_QQ_EMAIL=***
+MAIL_QQ_CREDENTIAL=***
+```
+
+例如 Gmail：
+
+```text
+MAIL_GMAIL_PROVIDER=gmail
+MAIL_GMAIL_LABEL=Gmail
+MAIL_GMAIL_EMAIL=***
+MAIL_GMAIL_CREDENTIAL=***
 ```
 
 Gmail 本版使用 App Password；不使用 Google OAuth。
@@ -63,17 +87,6 @@ MAIL_WORK_SMTP_SECURITY=tls
 ```
 
 `*_SECURITY` 只允许 `tls` 或 `starttls`。SMTP 端口 25 不允许。
-
-## 旧 QQ 配置兼容
-
-如果没有配置 `MAIL_ACCOUNTS`，仍兼容原来的：
-
-```text
-MAIL_QQ_EMAIL
-MAIL_QQ_AUTH_CODE
-```
-
-如果开始使用 `MAIL_ACCOUNTS` 且包含 `qq`，原 `MAIL_QQ_EMAIL` 与 `MAIL_QQ_AUTH_CODE` 仍可继续作为 QQ 的兼容配置，因此可逐步迁移。
 
 ## MCP Tool
 
@@ -96,3 +109,7 @@ MAIL_QQ_AUTH_CODE
 - `mail_save_draft`
 
 查询类 Tool 不传 `account` 时默认 `all`。发送、文件夹管理等写操作必须明确指定账号。
+
+## 配置原则
+
+本版本只支持新的多账号环境变量设计，不再兼容旧的 `MAIL_QQ_AUTH_CODE` 配置。新增邮箱账号只需要修改 Cloudflare 环境变量，无需修改代码。
