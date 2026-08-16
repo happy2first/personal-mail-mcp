@@ -1,9 +1,10 @@
 {
   "name": "personal-mail-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "check": "node --check src/index.js && node --check src/mail-config.js && node --check src/mail-sockets.js",
     "deploy": "wrangler deploy"
   },
   "dependencies": {

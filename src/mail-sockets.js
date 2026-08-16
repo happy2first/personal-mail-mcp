@@ -9,11 +9,7 @@ const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
 function logStage(protocol, stage, details = {}) {
-  console.info(JSON.stringify({
-    component: protocol.toLowerCase(),
-    stage,
-    ...details,
-  }));
+  console.info(JSON.stringify({ component: protocol.toLowerCase(), stage, ...details }));
 }
 
 function errorMessage(error) {
@@ -48,21 +44,17 @@ class SocketIO {
   }
 
   async fill(milliseconds, label) {
-    const { value, done } = await timeout(
-      this.reader.read(),
-      milliseconds,
-      label,
-    );
+    const { value, done } = await timeout(this.reader.read(), milliseconds, label);
     if (done) throw new Error("Remote socket closed");
     this.buffer = concatBytes(this.buffer, value);
   }
 
   async readLine(milliseconds = COMMAND_TIMEOUT, label = "Socket read timeout") {
     for (;;) {
-      for (let index = 0; index + 1 < this.buffer.length; index += 1) {
-        if (this.buffer[index] === 13 && this.buffer[index + 1] === 10) {
-          const line = this.buffer.slice(0, index);
-          this.buffer = this.buffer.slice(index + 2);
+      for (let i = 0; i + 1 < this.buffer.length; i += 1) {
+        if (this.buffer[i] === 13 && this.buffer[i + 1] === 10) {
+          const line = this.buffer.slice(0, i);
+          this.buffer = this.buffer.slice(i + 2);
           return decoder.decode(line);
         }
       }
@@ -71,46 +63,31 @@ class SocketIO {
   }
 
   async readExact(length, milliseconds = COMMAND_TIMEOUT, label = "Socket literal timeout") {
-    while (this.buffer.length < length) {
-      await this.fill(milliseconds, label);
-    }
+    while (this.buffer.length < length) await this.fill(milliseconds, label);
     const output = this.buffer.slice(0, length);
     this.buffer = this.buffer.slice(length);
     return output;
   }
 
   async write(value) {
-    const bytes =
-      typeof value === "string"
-        ? encoder.encode(value)
-        : value instanceof Uint8Array
-          ? value
-          : new Uint8Array(value);
-    await timeout(
-      this.writer.write(bytes),
-      COMMAND_TIMEOUT,
-      "Socket write timeout",
-    );
+    const bytes = typeof value === "string"
+      ? encoder.encode(value)
+      : value instanceof Uint8Array
+        ? value
+        : new Uint8Array(value);
+    await timeout(this.writer.write(bytes), COMMAND_TIMEOUT, "Socket write timeout");
+  }
+
+  releaseLocks() {
+    try { this.reader.releaseLock(); } catch {}
+    try { this.writer.releaseLock(); } catch {}
   }
 
   async close() {
     if (this.closed) return;
     this.closed = true;
-    try {
-      await this.socket.close();
-    } catch {
-      // Socket may already be closed by the peer.
-    }
-    try {
-      this.reader.releaseLock();
-    } catch {
-      // Ignore lock cleanup failures.
-    }
-    try {
-      this.writer.releaseLock();
-    } catch {
-      // Ignore lock cleanup failures.
-    }
+    try { await this.socket.close(); } catch {}
+    this.releaseLocks();
   }
 }
 
@@ -121,30 +98,25 @@ function imapQuote(value) {
 function encodeModifiedUtf7(value) {
   let output = "";
   let unicode = "";
-  const flushUnicode = () => {
+  const flush = () => {
     if (!unicode) return;
     const bytes = new Uint8Array(unicode.length * 2);
-    for (let index = 0; index < unicode.length; index += 1) {
-      const code = unicode.charCodeAt(index);
-      bytes[index * 2] = code >> 8;
-      bytes[index * 2 + 1] = code & 0xff;
+    for (let i = 0; i < unicode.length; i += 1) {
+      const code = unicode.charCodeAt(i);
+      bytes[i * 2] = code >> 8;
+      bytes[i * 2 + 1] = code & 0xff;
     }
-    output += `&${Buffer.from(bytes)
-      .toString("base64")
-      .replace(/\//g, ",")
-      .replace(/=+$/g, "")}-`;
+    output += `&${Buffer.from(bytes).toString("base64").replace(/\//g, ",").replace(/=+$/g, "")}-`;
     unicode = "";
   };
-  for (const character of String(value)) {
-    const code = character.charCodeAt(0);
+  for (const ch of String(value)) {
+    const code = ch.charCodeAt(0);
     if (code >= 0x20 && code <= 0x7e) {
-      flushUnicode();
-      output += character === "&" ? "&-" : character;
-    } else {
-      unicode += character;
-    }
+      flush();
+      output += ch === "&" ? "&-" : ch;
+    } else unicode += ch;
   }
-  flushUnicode();
+  flush();
   return output;
 }
 
@@ -155,8 +127,8 @@ function decodeModifiedUtf7(value) {
     const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
     const bytes = Buffer.from(padded, "base64");
     let output = "";
-    for (let index = 0; index + 1 < bytes.length; index += 2) {
-      output += String.fromCharCode((bytes[index] << 8) | bytes[index + 1]);
+    for (let i = 0; i + 1 < bytes.length; i += 2) {
+      output += String.fromCharCode((bytes[i] << 8) | bytes[i + 1]);
     }
     return output;
   });
@@ -180,29 +152,15 @@ function splitImapTokens(value) {
   let current = "";
   let quoted = false;
   let escaped = false;
-  for (const character of value.trim()) {
-    if (escaped) {
-      current += character;
-      escaped = false;
+  for (const ch of value.trim()) {
+    if (escaped) { current += ch; escaped = false; continue; }
+    if (quoted && ch === "\\") { escaped = true; continue; }
+    if (ch === '"') { quoted = !quoted; current += ch; continue; }
+    if (!quoted && /\s/.test(ch)) {
+      if (current) { tokens.push(current); current = ""; }
       continue;
     }
-    if (quoted && character === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (character === '"') {
-      quoted = !quoted;
-      current += character;
-      continue;
-    }
-    if (!quoted && /\s/.test(character)) {
-      if (current) {
-        tokens.push(current);
-        current = "";
-      }
-      continue;
-    }
-    current += character;
+    current += ch;
   }
   if (current) tokens.push(current);
   return tokens;
@@ -231,10 +189,7 @@ async function messageEnvelope(source) {
 }
 
 function formatImapDate(value) {
-  const months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${String(value.getUTCDate()).padStart(2, "0")}-${months[value.getUTCMonth()]}-${value.getUTCFullYear()}`;
 }
 
@@ -245,12 +200,8 @@ function searchTerm(key, value) {
 function buildSearch(criteria) {
   const terms = [];
   if (criteria.all) terms.push("ALL");
-  if (typeof criteria.seen === "boolean") {
-    terms.push(criteria.seen ? "SEEN" : "UNSEEN");
-  }
-  if (typeof criteria.flagged === "boolean") {
-    terms.push(criteria.flagged ? "FLAGGED" : "UNFLAGGED");
-  }
+  if (typeof criteria.seen === "boolean") terms.push(criteria.seen ? "SEEN" : "UNSEEN");
+  if (typeof criteria.flagged === "boolean") terms.push(criteria.flagged ? "FLAGGED" : "UNFLAGGED");
   if (criteria.from) terms.push(searchTerm("FROM", criteria.from));
   if (criteria.to) terms.push(searchTerm("TO", criteria.to));
   if (criteria.subject) terms.push(searchTerm("SUBJECT", criteria.subject));
@@ -260,9 +211,7 @@ function buildSearch(criteria) {
   if (criteria.or?.length) {
     const children = criteria.or.map(buildSearch);
     let expression = children.pop();
-    while (children.length) {
-      expression = `OR ${children.pop()} ${expression}`;
-    }
+    while (children.length) expression = `OR ${children.pop()} ${expression}`;
     terms.push(expression);
   }
   return terms.length ? terms.join(" ") : "ALL";
@@ -293,27 +242,17 @@ export class WorkerImapClient {
   async connect() {
     const startedAt = Date.now();
     const { host, port, auth } = this.options;
-    logStage("IMAP", "connecting", {
-      host,
-      port,
-      secureTransport: "on",
-    });
+    const security = this.options.security || (this.options.secure === false ? "starttls" : "tls");
+    const secureTransport = security === "starttls" ? "starttls" : "on";
+    logStage("IMAP", "connecting", { host, port, security });
+
     try {
-      this.socket = connect(
-        { hostname: host, port },
-        { secureTransport: "on", allowHalfOpen: false },
-      );
-      await timeout(
-        this.socket.opened,
-        this.options.connectionTimeout || CONNECT_TIMEOUT,
-        "IMAP TCP/TLS open timeout",
-      );
+      this.socket = connect({ hostname: host, port }, { secureTransport, allowHalfOpen: false });
+      await timeout(this.socket.opened, this.options.connectionTimeout || CONNECT_TIMEOUT, "IMAP TCP open timeout");
       this.io = new SocketIO(this.socket);
-      this.secureConnection = true;
-      logStage("IMAP", "tcp_tls_opened", {
-        host,
-        port,
-        durationMs: Date.now() - startedAt,
+      this.secureConnection = security === "tls";
+      logStage("IMAP", security === "tls" ? "tcp_tls_opened" : "tcp_opened", {
+        host, port, durationMs: Date.now() - startedAt,
       });
 
       const greeting = await this.io.readLine(
@@ -323,33 +262,35 @@ export class WorkerImapClient {
       if (!/^\*\s+(OK|PREAUTH)\b/i.test(greeting)) {
         throw new Error(`IMAP invalid greeting: ${greeting.slice(0, 160)}`);
       }
-      logStage("IMAP", "server_greeting_received", {
-        durationMs: Date.now() - startedAt,
-      });
-
+      logStage("IMAP", "server_greeting_received", { durationMs: Date.now() - startedAt });
       const advertised = greeting.match(/\[CAPABILITY\s+([^\]]+)\]/i);
       if (advertised) this.setCapabilities(advertised[1]);
       if (!this.capabilities.size) await this.refreshCapabilities();
+
+      if (security === "starttls") {
+        if (!this.capabilities.has("STARTTLS")) throw new Error("IMAP server does not advertise STARTTLS");
+        await this.command("STARTTLS", { operation: "STARTTLS" });
+        this.io.releaseLocks();
+        this.socket = this.socket.startTls();
+        await timeout(this.socket.opened, this.options.connectionTimeout || CONNECT_TIMEOUT, "IMAP STARTTLS open timeout");
+        this.io = new SocketIO(this.socket);
+        this.secureConnection = true;
+        this.capabilities.clear();
+        await this.refreshCapabilities();
+        logStage("IMAP", "starttls_upgraded", { durationMs: Date.now() - startedAt });
+      }
 
       if (/^\*\s+PREAUTH\b/i.test(greeting)) {
         this.authenticated = true;
       } else {
         logStage("IMAP", "authenticating");
-        await this.command(
-          `LOGIN ${imapQuote(auth.user)} ${imapQuote(auth.pass)}`,
-          { operation: "LOGIN" },
-        );
+        await this.authenticate(auth.user, auth.pass);
         this.authenticated = true;
       }
       await this.refreshCapabilities();
-      logStage("IMAP", "authenticated", {
-        durationMs: Date.now() - startedAt,
-      });
+      logStage("IMAP", "authenticated", { durationMs: Date.now() - startedAt });
     } catch (error) {
-      logStage("IMAP", "failed", {
-        durationMs: Date.now() - startedAt,
-        error: errorMessage(error),
-      });
+      logStage("IMAP", "failed", { durationMs: Date.now() - startedAt, error: errorMessage(error) });
       this.emitError(error);
       await this.close();
       throw error;
@@ -370,6 +311,25 @@ export class WorkerImapClient {
     }
   }
 
+  async authenticate(user, pass) {
+    if (!this.capabilities.has("LOGINDISABLED")) {
+      try {
+        await this.command(`LOGIN ${imapQuote(user)} ${imapQuote(pass)}`, { operation: "LOGIN" });
+        return;
+      } catch (error) {
+        if (!this.capabilities.has("AUTH=PLAIN")) throw error;
+      }
+    }
+    if (!this.capabilities.has("AUTH=PLAIN")) throw new Error("IMAP server does not support LOGIN or AUTH=PLAIN");
+    const tag = `A${String(++this.tag).padStart(4, "0")}`;
+    await this.io.write(`${tag} AUTHENTICATE PLAIN\r\n`);
+    const continuation = await this.io.readLine(COMMAND_TIMEOUT, "IMAP AUTH PLAIN continuation timeout");
+    if (!continuation.startsWith("+")) throw new Error(`IMAP AUTH PLAIN rejected: ${continuation.slice(0, 160)}`);
+    const payload = Buffer.from(`\0${user}\0${pass}`).toString("base64");
+    await this.io.write(`${payload}\r\n`);
+    await this.readTagged(tag, COMMAND_TIMEOUT);
+  }
+
   async readRecord(milliseconds = COMMAND_TIMEOUT) {
     let line = await this.io.readLine(milliseconds, "IMAP response timeout");
     const parts = [line];
@@ -377,13 +337,7 @@ export class WorkerImapClient {
     for (;;) {
       const literal = line.match(/\{(\d+)\+?\}$/);
       if (!literal) break;
-      literals.push(
-        await this.io.readExact(
-          Number(literal[1]),
-          milliseconds,
-          "IMAP literal timeout",
-        ),
-      );
+      literals.push(await this.io.readExact(Number(literal[1]), milliseconds, "IMAP literal timeout"));
       line = await this.io.readLine(milliseconds, "IMAP response timeout");
       parts.push(line);
     }
@@ -424,11 +378,8 @@ export class WorkerImapClient {
 
   async logout() {
     if (!this.io) return;
-    try {
-      await this.command("LOGOUT", { operation: "LOGOUT", timeout: 5_000 });
-    } finally {
-      await this.close();
-    }
+    try { await this.command("LOGOUT", { operation: "LOGOUT", timeout: 5_000 }); }
+    finally { await this.close(); }
   }
 
   async close() {
@@ -442,27 +393,20 @@ export class WorkerImapClient {
 
   async list(options = {}) {
     const listed = await this.command('LIST "" "*"', { operation: "LIST" });
-    const subscribed = await this.command('LSUB "" "*"', { operation: "LSUB" });
+    let subscribedRecords = [];
+    try {
+      subscribedRecords = (await this.command('LSUB "" "*"', { operation: "LSUB" })).records;
+    } catch {}
     const subscribedPaths = new Set(
-      subscribed.records
-        .map((record) => this.parseListRecord(record, true))
-        .filter(Boolean)
-        .map((folder) => folder.path),
+      subscribedRecords.map((r) => this.parseListRecord(r, true)).filter(Boolean).map((f) => f.path),
     );
-    const folders = listed.records
-      .map((record) => this.parseListRecord(record, false))
-      .filter(Boolean);
-
+    const folders = listed.records.map((r) => this.parseListRecord(r, false)).filter(Boolean);
     for (const folder of folders) {
       folder.subscribed = subscribedPaths.has(folder.path);
       if (options.statusQuery) {
-        try {
-          folder.status = await this.status(folder.path, options.statusQuery);
-        } catch (error) {
-          logStage("IMAP", "folder_status_failed", {
-            folder: folder.path,
-            error: errorMessage(error),
-          });
+        try { folder.status = await this.status(folder.path, options.statusQuery); }
+        catch (error) {
+          logStage("IMAP", "folder_status_failed", { folder: folder.path, error: errorMessage(error) });
           folder.status = null;
         }
       }
@@ -476,14 +420,10 @@ export class WorkerImapClient {
     const tokens = splitImapTokens(match[2]);
     if (tokens.length < 2) return null;
     const flags = new Set(match[1].split(/\s+/).filter(Boolean));
-    const rawPath = record.literals[0]
-      ? decoder.decode(record.literals[0])
-      : unquote(tokens.slice(1).join(" "));
+    const rawPath = record.literals[0] ? decoder.decode(record.literals[0]) : unquote(tokens.slice(1).join(" "));
     const path = decodeModifiedUtf7(rawPath);
-    const specialUse =
-      [...flags].find((flag) =>
-        /^\\(?:All|Archive|Drafts|Flagged|Junk|Sent|Trash)$/i.test(flag),
-      ) || (path.toUpperCase() === "INBOX" ? "\\Inbox" : null);
+    const specialUse = [...flags].find((flag) => /^\\(?:All|Archive|Drafts|Flagged|Junk|Sent|Trash)$/i.test(flag))
+      || (path.toUpperCase() === "INBOX" ? "\\Inbox" : null);
     return {
       path,
       name: path.split(unquote(tokens[0]) || "/").pop() || path,
@@ -501,14 +441,10 @@ export class WorkerImapClient {
     if (query.uidNext) names.push("UIDNEXT");
     if (query.uidValidity) names.push("UIDVALIDITY");
     if (query.size) names.push("SIZE");
-    const run = async (items) =>
-      this.command(`STATUS ${mailboxArg(path)} (${items.join(" ")})`, {
-        operation: "STATUS",
-      });
+    const run = (items) => this.command(`STATUS ${mailboxArg(path)} (${items.join(" ")})`, { operation: "STATUS" });
     let response;
-    try {
-      response = await run(names);
-    } catch (error) {
+    try { response = await run(names); }
+    catch (error) {
       if (!query.size) throw error;
       response = await run(names.filter((name) => name !== "SIZE"));
     }
@@ -516,47 +452,31 @@ export class WorkerImapClient {
     const values = record?.text.match(/\(([^)]*)\)/)?.[1] || "";
     const tokens = values.trim().split(/\s+/);
     const output = {};
-    const keyMap = {
-      MESSAGES: "messages",
-      UNSEEN: "unseen",
-      UIDNEXT: "uidNext",
-      UIDVALIDITY: "uidValidity",
-      SIZE: "size",
-    };
-    for (let index = 0; index + 1 < tokens.length; index += 2) {
-      const key = keyMap[tokens[index].toUpperCase()];
-      if (key) output[key] = Number(tokens[index + 1]);
+    const keyMap = { MESSAGES: "messages", UNSEEN: "unseen", UIDNEXT: "uidNext", UIDVALIDITY: "uidValidity", SIZE: "size" };
+    for (let i = 0; i + 1 < tokens.length; i += 2) {
+      const key = keyMap[tokens[i].toUpperCase()];
+      if (key) output[key] = Number(tokens[i + 1]);
     }
     return output;
   }
 
   async getQuota(path) {
     let response;
-    try {
-      response = await this.command(`GETQUOTAROOT ${mailboxArg(path)}`, {
-        operation: "GETQUOTAROOT",
-      });
-    } catch {
-      return false;
-    }
+    try { response = await this.command(`GETQUOTAROOT ${mailboxArg(path)}`, { operation: "GETQUOTAROOT" }); }
+    catch { return false; }
     const record = response.records.find((item) => /^\*\s+QUOTA\b/i.test(item.text));
     if (!record) return false;
     const values = record.text.match(/\(([^)]*)\)/)?.[1]?.trim().split(/\s+/) || [];
     const output = {};
-    for (let index = 0; index + 2 < values.length; index += 3) {
-      output[values[index].toLowerCase()] = {
-        used: Number(values[index + 1]),
-        limit: Number(values[index + 2]),
-      };
+    for (let i = 0; i + 2 < values.length; i += 3) {
+      output[values[i].toLowerCase()] = { used: Number(values[i + 1]), limit: Number(values[i + 2]) };
     }
     return output;
   }
 
   async getMailboxLock(path, options = {}) {
     const command = options.readOnly ? "EXAMINE" : "SELECT";
-    const response = await this.command(`${command} ${mailboxArg(path)}`, {
-      operation: command,
-    });
+    const response = await this.command(`${command} ${mailboxArg(path)}`, { operation: command });
     let exists = 0;
     let uidNext;
     let uidValidity;
@@ -568,17 +488,8 @@ export class WorkerImapClient {
       const validity = record.text.match(/\[UIDVALIDITY\s+(\d+)\]/i);
       if (validity) uidValidity = Number(validity[1]);
     }
-    this.mailbox = {
-      path,
-      exists,
-      uidNext,
-      uidValidity,
-      readOnly: !!options.readOnly,
-    };
-    return {
-      path,
-      release: () => {},
-    };
+    this.mailbox = { path, exists, uidNext, uidValidity, readOnly: !!options.readOnly };
+    return { path, release: () => {} };
   }
 
   normalizeRange(range, uidMode) {
@@ -597,16 +508,10 @@ export class WorkerImapClient {
     const normalizedRange = this.normalizeRange(range, !!options.uid);
     if (!normalizedRange) return [];
     const attributes = ["UID", "FLAGS", "RFC822.SIZE", "INTERNALDATE"];
-    if (query.source) {
-      attributes.push("BODY.PEEK[]");
-    } else if (query.envelope) {
-      attributes.push("BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO CC DATE)]");
-    }
+    if (query.source) attributes.push("BODY.PEEK[]");
+    else if (query.envelope) attributes.push("BODY.PEEK[HEADER.FIELDS (SUBJECT FROM TO CC DATE)]");
     const prefix = options.uid ? "UID " : "";
-    const response = await this.command(
-      `${prefix}FETCH ${normalizedRange} (${attributes.join(" ")})`,
-      { operation: "FETCH" },
-    );
+    const response = await this.command(`${prefix}FETCH ${normalizedRange} (${attributes.join(" ")})`, { operation: "FETCH" });
     const messages = [];
     for (const record of response.records) {
       const sequence = record.text.match(/^\*\s+(\d+)\s+FETCH\b/i);
@@ -641,48 +546,29 @@ export class WorkerImapClient {
     const prefix = options.uid ? "UID " : "";
     const expression = buildSearch(criteria);
     const charset = /[^\x00-\x7f]/.test(expression) ? "CHARSET UTF-8 " : "";
-    const response = await this.command(
-      `${prefix}SEARCH ${charset}${expression}`,
-      { operation: "SEARCH" },
-    );
+    const response = await this.command(`${prefix}SEARCH ${charset}${expression}`, { operation: "SEARCH" });
     const record = response.records.find((item) => /^\*\s+SEARCH\b/i.test(item.text));
     if (!record) return [];
-    return record.text
-      .replace(/^\*\s+SEARCH\s*/i, "")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .map(Number)
-      .filter(Number.isFinite);
+    return record.text.replace(/^\*\s+SEARCH\s*/i, "").trim().split(/\s+/).filter(Boolean).map(Number).filter(Number.isFinite);
   }
 
   async messageFlagsAdd(uid, flags) {
-    await this.command(
-      `UID STORE ${uid} +FLAGS.SILENT (${flags.join(" ")})`,
-      { operation: "STORE" },
-    );
+    await this.command(`UID STORE ${uid} +FLAGS.SILENT (${flags.join(" ")})`, { operation: "STORE" });
     return true;
   }
 
   async messageFlagsRemove(uid, flags) {
-    await this.command(
-      `UID STORE ${uid} -FLAGS.SILENT (${flags.join(" ")})`,
-      { operation: "STORE" },
-    );
+    await this.command(`UID STORE ${uid} -FLAGS.SILENT (${flags.join(" ")})`, { operation: "STORE" });
     return true;
   }
 
   async messageCopy(uid, targetFolder) {
-    await this.command(`UID COPY ${uid} ${mailboxArg(targetFolder)}`, {
-      operation: "COPY",
-    });
+    await this.command(`UID COPY ${uid} ${mailboxArg(targetFolder)}`, { operation: "COPY" });
     return true;
   }
 
   async messageMove(uid, targetFolder) {
-    await this.command(`UID MOVE ${uid} ${mailboxArg(targetFolder)}`, {
-      operation: "MOVE",
-    });
+    await this.command(`UID MOVE ${uid} ${mailboxArg(targetFolder)}`, { operation: "MOVE" });
     return true;
   }
 
@@ -692,24 +578,17 @@ export class WorkerImapClient {
   }
 
   async mailboxRename(path, newPath) {
-    await this.command(
-      `RENAME ${mailboxArg(path)} ${mailboxArg(newPath)}`,
-      { operation: "RENAME" },
-    );
+    await this.command(`RENAME ${mailboxArg(path)} ${mailboxArg(newPath)}`, { operation: "RENAME" });
     return { path, newPath };
   }
 
   async mailboxSubscribe(path) {
-    await this.command(`SUBSCRIBE ${mailboxArg(path)}`, {
-      operation: "SUBSCRIBE",
-    });
+    await this.command(`SUBSCRIBE ${mailboxArg(path)}`, { operation: "SUBSCRIBE" });
     return true;
   }
 
   async mailboxUnsubscribe(path) {
-    await this.command(`UNSUBSCRIBE ${mailboxArg(path)}`, {
-      operation: "UNSUBSCRIBE",
-    });
+    await this.command(`UNSUBSCRIBE ${mailboxArg(path)}`, { operation: "UNSUBSCRIBE" });
     return true;
   }
 
@@ -717,26 +596,15 @@ export class WorkerImapClient {
     const tag = `A${String(++this.tag).padStart(4, "0")}`;
     const bytes = message instanceof Uint8Array ? message : new Uint8Array(message);
     const flagList = flags.length ? ` (${flags.join(" ")})` : "";
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const dateText = date
-      ? ` "${String(date.getUTCDate()).padStart(2, "0")}-${[
-          "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-        ][date.getUTCMonth()]}-${date.getUTCFullYear()} ${String(
-          date.getUTCHours(),
-        ).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(
-          2,
-          "0",
-        )}:${String(date.getUTCSeconds()).padStart(2, "0")} +0000"`
+      ? ` "${String(date.getUTCDate()).padStart(2, "0")}-${months[date.getUTCMonth()]}-${date.getUTCFullYear()} ${String(date.getUTCHours()).padStart(2, "0")}:${String(date.getUTCMinutes()).padStart(2, "0")}:${String(date.getUTCSeconds()).padStart(2, "0")} +0000"`
       : "";
     const literalPlus = this.capabilities.has("LITERAL+");
-    await this.io.write(
-      `${tag} APPEND ${mailboxArg(path)}${flagList}${dateText} {${bytes.length}${literalPlus ? "+" : ""}}\r\n`,
-    );
+    await this.io.write(`${tag} APPEND ${mailboxArg(path)}${flagList}${dateText} {${bytes.length}${literalPlus ? "+" : ""}}\r\n`);
     if (!literalPlus) {
       const continuation = await this.io.readLine(COMMAND_TIMEOUT, "IMAP APPEND continuation timeout");
-      if (!continuation.startsWith("+")) {
-        throw new Error(`IMAP APPEND rejected: ${continuation.slice(0, 200)}`);
-      }
+      if (!continuation.startsWith("+")) throw new Error(`IMAP APPEND rejected: ${continuation.slice(0, 200)}`);
     }
     await this.io.write(bytes);
     await this.io.write("\r\n");
@@ -772,9 +640,7 @@ class SmtpSession {
       lines.push(match[3]);
       if (match[2] === " ") break;
     }
-    if (!expected.includes(code)) {
-      throw new Error(`SMTP ${label} failed (${code}): ${lines.join(" ").slice(0, 240)}`);
-    }
+    if (!expected.includes(code)) throw new Error(`SMTP ${label} failed (${code}): ${lines.join(" ").slice(0, 240)}`);
     return { code, lines, text: lines.join(" ") };
   }
 
@@ -785,45 +651,49 @@ class SmtpSession {
 
   async connectAndAuthenticate() {
     const startedAt = Date.now();
-    const { host, port, email, authCode } = this.config;
-    logStage("SMTP", "connecting", {
-      host,
-      port,
-      secureTransport: "on",
-    });
+    const { host, port, email, credential } = this.config;
+    const security = this.config.security || "tls";
+    const secureTransport = security === "starttls" ? "starttls" : "on";
+    logStage("SMTP", "connecting", { host, port, security });
     try {
-      this.socket = connect(
-        { hostname: host, port },
-        { secureTransport: "on", allowHalfOpen: false },
-      );
-      await timeout(this.socket.opened, CONNECT_TIMEOUT, "SMTP TCP/TLS open timeout");
+      this.socket = connect({ hostname: host, port }, { secureTransport, allowHalfOpen: false });
+      await timeout(this.socket.opened, CONNECT_TIMEOUT, "SMTP TCP open timeout");
       this.io = new SocketIO(this.socket);
-      logStage("SMTP", "tcp_tls_opened", {
-        host,
-        port,
-        durationMs: Date.now() - startedAt,
+      logStage("SMTP", security === "tls" ? "tcp_tls_opened" : "tcp_opened", {
+        host, port, durationMs: Date.now() - startedAt,
       });
       await this.readResponse([220], "greeting");
-      logStage("SMTP", "server_greeting_received", {
-        durationMs: Date.now() - startedAt,
-      });
-      const ehlo = await this.command("EHLO personal-mail-mcp", [250], "EHLO");
-      const authLine = ehlo.lines.find((line) => /^AUTH\b/i.test(line));
-      if (authLine && !/\bLOGIN\b/i.test(authLine)) {
-        throw new Error("SMTP server does not advertise AUTH LOGIN");
+      logStage("SMTP", "server_greeting_received", { durationMs: Date.now() - startedAt });
+      let ehlo = await this.command("EHLO personal-mail-mcp", [250], "EHLO");
+
+      if (security === "starttls") {
+        if (!ehlo.lines.some((line) => /^STARTTLS\b/i.test(line))) {
+          throw new Error("SMTP server does not advertise STARTTLS");
+        }
+        await this.command("STARTTLS", [220], "STARTTLS");
+        this.io.releaseLocks();
+        this.socket = this.socket.startTls();
+        await timeout(this.socket.opened, CONNECT_TIMEOUT, "SMTP STARTTLS open timeout");
+        this.io = new SocketIO(this.socket);
+        logStage("SMTP", "starttls_upgraded", { durationMs: Date.now() - startedAt });
+        ehlo = await this.command("EHLO personal-mail-mcp", [250], "EHLO after STARTTLS");
       }
+
+      const authText = ehlo.lines.filter((line) => /^AUTH\b/i.test(line)).join(" ").toUpperCase();
       logStage("SMTP", "authenticating");
-      await this.command("AUTH LOGIN", [334], "AUTH LOGIN");
-      await this.command(Buffer.from(email).toString("base64"), [334], "AUTH username");
-      await this.command(Buffer.from(authCode).toString("base64"), [235], "AUTH credential");
-      logStage("SMTP", "authenticated", {
-        durationMs: Date.now() - startedAt,
-      });
+      if (/\bLOGIN\b/.test(authText)) {
+        await this.command("AUTH LOGIN", [334], "AUTH LOGIN");
+        await this.command(Buffer.from(email).toString("base64"), [334], "AUTH username");
+        await this.command(Buffer.from(credential).toString("base64"), [235], "AUTH credential");
+      } else if (/\bPLAIN\b/.test(authText)) {
+        const payload = Buffer.from(`\0${email}\0${credential}`).toString("base64");
+        await this.command(`AUTH PLAIN ${payload}`, [235], "AUTH PLAIN");
+      } else {
+        throw new Error("SMTP server does not advertise AUTH LOGIN or AUTH PLAIN");
+      }
+      logStage("SMTP", "authenticated", { durationMs: Date.now() - startedAt });
     } catch (error) {
-      logStage("SMTP", "failed", {
-        durationMs: Date.now() - startedAt,
-        error: errorMessage(error),
-      });
+      logStage("SMTP", "failed", { durationMs: Date.now() - startedAt, error: errorMessage(error) });
       await this.close();
       throw error;
     }
@@ -838,13 +708,9 @@ class SmtpSession {
 
   async quit() {
     if (!this.io) return;
-    try {
-      await this.command("QUIT", [221], "QUIT");
-    } catch {
-      // The server is allowed to close immediately after QUIT.
-    } finally {
-      await this.close();
-    }
+    try { await this.command("QUIT", [221], "QUIT"); }
+    catch {}
+    finally { await this.close(); }
   }
 }
 
@@ -856,24 +722,12 @@ async function createMimeMessage(options) {
     disableFileAccess: true,
     disableUrlAccess: true,
   });
-  return transport.sendMail({
-    ...options,
-    disableFileAccess: true,
-    disableUrlAccess: true,
-  });
+  return transport.sendMail({ ...options, disableFileAccess: true, disableUrlAccess: true });
 }
 
 function dotStuff(message) {
-  const normalized = Buffer.from(message)
-    .toString("binary")
-    .replace(/\r?\n/g, "\r\n")
-    .replace(/^\./gm, "..");
-  return Buffer.from(
-    normalized.endsWith("\r\n")
-      ? `${normalized}.\r\n`
-      : `${normalized}\r\n.\r\n`,
-    "binary",
-  );
+  const normalized = Buffer.from(message).toString("binary").replace(/\r?\n/g, "\r\n").replace(/^\./gm, "..");
+  return Buffer.from(normalized.endsWith("\r\n") ? `${normalized}.\r\n` : `${normalized}\r\n.\r\n`, "binary");
 }
 
 export class WorkerSmtpTransport {
@@ -903,11 +757,7 @@ export class WorkerSmtpTransport {
     let finalResponse;
     let completed = false;
     try {
-      await session.command(
-        `MAIL FROM:<${this.config.email}>`,
-        [250],
-        "MAIL FROM",
-      );
+      await session.command(`MAIL FROM:<${this.config.email}>`, [250], "MAIL FROM");
       for (const recipient of recipients) {
         try {
           await session.command(`RCPT TO:<${recipient}>`, [250, 251], "RCPT TO");
@@ -928,11 +778,8 @@ export class WorkerSmtpTransport {
         response: `${finalResponse.code} ${finalResponse.text}`,
       };
     } finally {
-      if (completed) {
-        await session.quit();
-      } else {
-        await session.close();
-      }
+      if (completed) await session.quit();
+      else await session.close();
     }
   }
 }
