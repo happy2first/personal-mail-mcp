@@ -10,8 +10,5 @@
   "observability": {
     "enabled": true
   },
-  "keep_vars": true,
-  "vars": {
-    "TEAM_DOMAIN": "https://liao8top.cloudflareaccess.com"
-  }
+  "keep_vars": true
 }
