@@ -1,3 +1,5 @@
+import "./netease-imap-id.js";
+
 const PROVIDERS = {
   qq: {
     label: "QQ邮箱",
