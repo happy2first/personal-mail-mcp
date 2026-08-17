@@ -1,0 +1,24 @@
+# Cloudflare Access
+TEAM_DOMAIN=https://example.cloudflareaccess.com
+POLICY_AUD=replace-with-cloudflare-access-application-aud
+
+# Enabled accounts
+MAIL_ACCOUNTS=qq,163main,gmail
+
+# QQ Mail
+MAIL_QQ_PROVIDER=qq
+MAIL_QQ_LABEL=QQ Mail
+MAIL_QQ_EMAIL=your-address@example.com
+MAIL_QQ_CREDENTIAL=replace-with-qq-authorization-code
+
+# 163 Mail
+MAIL_163MAIN_PROVIDER=163
+MAIL_163MAIN_LABEL=163 Mail
+MAIL_163MAIN_EMAIL=your-address@example.com
+MAIL_163MAIN_CREDENTIAL=replace-with-163-client-authorization-code
+
+# Gmail
+MAIL_GMAIL_PROVIDER=gmail
+MAIL_GMAIL_LABEL=Gmail
+MAIL_GMAIL_EMAIL=your-address@gmail.com
+MAIL_GMAIL_CREDENTIAL=replace-with-google-app-password
