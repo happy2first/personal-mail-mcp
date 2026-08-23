@@ -16,6 +16,9 @@ const PROVIDERS = {
     imap: { host: "imap.gmail.com", port: 993, security: "tls" },
     smtp: { host: "smtp.gmail.com", port: 465, security: "tls" },
   },
+  proton: {
+    label: "Proton Mail",
+  },
 };
 
 const ID_RE = /^[a-z0-9_]+$/i;
@@ -77,13 +80,25 @@ export function getAccount(env, id) {
 
   const prefix = prefixFor(actualId);
   const provider = must(env[`${prefix}_PROVIDER`], `${prefix}_PROVIDER`).toLowerCase();
-  if (!["qq", "163", "gmail", "custom"].includes(provider)) {
+  if (!["qq", "163", "gmail", "custom", "proton"].includes(provider)) {
     throw new Error(`不支持的邮箱 Provider：${provider}`);
   }
 
   const email = must(env[`${prefix}_EMAIL`], `${prefix}_EMAIL`);
   const credential = must(env[`${prefix}_CREDENTIAL`], `${prefix}_CREDENTIAL`);
   const label = String(env[`${prefix}_LABEL`] || PROVIDERS[provider]?.label || actualId).trim();
+
+  if (provider === "proton") {
+    return {
+      id: actualId,
+      label: label || actualId,
+      provider,
+      email,
+      credential,
+      imap: null,
+      smtp: null,
+    };
+  }
 
   let imap;
   let smtp;
@@ -118,6 +133,18 @@ export function listAccounts(env) {
   return listAccountIds(env).map((id) => {
     try {
       const cfg = getAccount(env, id);
+      if (cfg.provider === "proton") {
+        return {
+          id: cfg.id,
+          label: cfg.label,
+          provider: cfg.provider,
+          configured: true,
+          protonApi: true,
+          imap: false,
+          smtp: false,
+          readOnly: true,
+        };
+      }
       return {
         id: cfg.id,
         label: cfg.label,
