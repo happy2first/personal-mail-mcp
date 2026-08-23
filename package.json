@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check src/index.js && node --check src/mail-config.js && node --check src/mail-sockets.js && node --check src/proton/srp.js && node --check src/proton/client.js && node --check src/proton/provider.js && node --check src/proton/session.js",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/index.js && node --check src/mail-config.js && node --check src/mail-sockets.js && node --check src/proton/srp.js && node --check src/proton/client.js && node --check src/proton/provider.js && node --check src/proton/session.js && npm test",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
