@@ -1,6 +1,18 @@
 import { getAccount } from "../mail-config.js";
 import { ProtonClient } from "./client.js";
 
+const RISK_BLOCK_KEY = "proton:2028:blockedUntil";
+const RISK_COOLDOWN_MS = 30 * 60 * 1000;
+
+function riskBlockError(blockedUntil) {
+  const retryAfterSeconds = Math.max(1, Math.ceil((blockedUntil - Date.now()) / 1000));
+  const error = new Error(`Proton 2028 风控熔断中：为避免重复登录，请约 ${retryAfterSeconds} 秒后再试`);
+  error.protonCode = 2028;
+  error.retryAfterSeconds = retryAfterSeconds;
+  error.circuitOpen = true;
+  return error;
+}
+
 export class ProtonSession {
   constructor(state, env) {
     this.state = state;
@@ -19,9 +31,26 @@ export class ProtonSession {
     return this.client;
   }
 
+  async assertRiskCircuitClosed() {
+    const blockedUntil = Number((await this.state.storage.get(RISK_BLOCK_KEY)) || 0);
+    if (!blockedUntil) return;
+    if (blockedUntil <= Date.now()) {
+      await this.state.storage.delete(RISK_BLOCK_KEY);
+      return;
+    }
+    throw riskBlockError(blockedUntil);
+  }
+
+  async rememberRiskBlock(error) {
+    if (Number(error?.protonCode) !== 2028 || error?.circuitOpen) return;
+    const blockedUntil = Number(error?.blockedUntil) || (Date.now() + RISK_COOLDOWN_MS);
+    await this.state.storage.put(RISK_BLOCK_KEY, blockedUntil);
+  }
+
   async fetch(request) {
     if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
     try {
+      await this.assertRiskCircuitClosed();
       const body = await request.json();
       const account = String(body?.account || "").trim();
       const action = String(body?.action || "").trim();
@@ -40,11 +69,16 @@ export class ProtonSession {
 
       return Response.json({ ok: true, data });
     } catch (error) {
+      await this.rememberRiskBlock(error);
       console.error("ProtonSession:", error?.message || String(error));
+      const protonCode = Number(error?.protonCode) || undefined;
+      const retryAfterSeconds = Number(error?.retryAfterSeconds) || undefined;
       return Response.json({
         ok: false,
         error: error instanceof Error ? error.message : String(error),
-      }, { status: 400 });
+        ...(protonCode ? { protonCode } : {}),
+        ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
+      }, { status: protonCode === 2028 ? 429 : 400 });
     }
   }
 }
