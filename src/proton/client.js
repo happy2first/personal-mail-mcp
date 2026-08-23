@@ -11,6 +11,8 @@ import { computeKeyPassword, getSrp } from "./srp.js";
 
 const DEFAULT_API = "https://mail.proton.me/api";
 const DEFAULT_APP_VERSION = "macos-bridge@3.24.1";
+const PROTON_REFRESH_REDIRECT_URI = "https://protonmail.ch";
+const PROTON_2028_COOLDOWN_MS = 30 * 60 * 1000;
 const decoder = new TextDecoder();
 
 const SYSTEM_LABELS = {
@@ -100,6 +102,7 @@ function apiError(payload, status) {
   const error = new Error(`Proton API ${code}: ${message}`);
   error.status = status;
   error.protonCode = code;
+  error.fromApi = true;
   return error;
 }
 
@@ -107,6 +110,23 @@ function isApiSuccess(payload, status) {
   if (!status || status < 200 || status >= 300) return false;
   if (payload && typeof payload.Code === "number" && payload.Code !== 1000) return false;
   return true;
+}
+
+function randomState() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Buffer.from(bytes).toString("base64url");
+}
+
+function circuitError(blockedUntil) {
+  const retryAfterSeconds = Math.max(1, Math.ceil((blockedUntil - Date.now()) / 1000));
+  const error = new Error(`Proton 2028 风控熔断中：为避免重复登录，请约 ${retryAfterSeconds} 秒后再试`);
+  error.status = 429;
+  error.protonCode = 2028;
+  error.retryAfterSeconds = retryAfterSeconds;
+  error.blockedUntil = blockedUntil;
+  error.circuitOpen = true;
+  return error;
 }
 
 async function unlockPrivateKey(armoredKey, passphrase) {
@@ -140,6 +160,9 @@ export class ProtonClient {
     this.addresses = [];
     this.userKeys = [];
     this.addressKeys = new Map();
+    this.loginPromise = null;
+    this.refreshPromise = null;
+    this.blockedUntil = 0;
   }
 
   baseHeaders() {
@@ -160,7 +183,25 @@ export class ProtonClient {
     };
   }
 
+  assertCircuitClosed() {
+    if (!this.blockedUntil) return;
+    if (this.blockedUntil <= Date.now()) {
+      this.blockedUntil = 0;
+      return;
+    }
+    throw circuitError(this.blockedUntil);
+  }
+
+  tripRiskCircuit(error) {
+    if (Number(error?.protonCode) !== 2028) return error;
+    this.blockedUntil = Math.max(this.blockedUntil, Date.now() + PROTON_2028_COOLDOWN_MS);
+    error.blockedUntil = this.blockedUntil;
+    error.retryAfterSeconds = Math.max(1, Math.ceil((this.blockedUntil - Date.now()) / 1000));
+    return error;
+  }
+
   async raw(path, { method = "GET", body, auth = false } = {}) {
+    this.assertCircuitClosed();
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: auth ? this.authHeaders() : this.baseHeaders(),
@@ -172,30 +213,39 @@ export class ProtonClient {
     } catch {
       throw new Error(`Proton API 返回非 JSON（HTTP ${response.status}）`);
     }
-    if (!isApiSuccess(payload, response.status)) throw apiError(payload, response.status);
+    if (!isApiSuccess(payload, response.status)) {
+      throw this.tripRiskCircuit(apiError(payload, response.status));
+    }
     return payload;
   }
 
   async request(path, options = {}, retry = true) {
     await this.ensureAuthenticated();
+    const usedAccessToken = this.auth?.AccessToken;
     try {
       return await this.raw(path, { ...options, auth: true });
     } catch (error) {
       if (retry && error?.status === 401) {
-        this.reset();
-        await this.ensureAuthenticated();
+        if (this.auth?.AccessToken && this.auth.AccessToken !== usedAccessToken) {
+          return this.raw(path, { ...options, auth: true });
+        }
+        await this.refreshAuthenticated();
         return this.raw(path, { ...options, auth: true });
       }
       throw error;
     }
   }
 
-  reset() {
+  clearSession() {
     this.auth = null;
     this.user = null;
     this.addresses = [];
     this.userKeys = [];
     this.addressKeys = new Map();
+  }
+
+  reset() {
+    this.clearSession();
   }
 
   async login() {
@@ -221,12 +271,65 @@ export class ProtonClient {
     const twoFA = Number(auth?.["2FA"]?.Enabled ?? auth?.TwoFA?.Enabled ?? 0);
     if (twoFA !== 0) throw new Error("当前 Proton 适配器尚未启用 2FA 登录");
     if (Number(auth.PasswordMode || 1) !== 1) throw new Error("当前 Proton 适配器仅支持单密码模式");
-    if (!auth.UID || !auth.AccessToken) throw new Error("Proton 登录成功但缺少 UID/AccessToken");
+    if (!auth.UID || !auth.AccessToken || !auth.RefreshToken) {
+      throw new Error("Proton 登录成功但缺少 UID/AccessToken/RefreshToken");
+    }
     this.auth = auth;
+    return auth;
   }
 
   async ensureAuthenticated() {
-    if (!this.auth) await this.login();
+    this.assertCircuitClosed();
+    if (this.auth?.AccessToken) return this.auth;
+    if (!this.loginPromise) {
+      this.loginPromise = this.login().finally(() => {
+        this.loginPromise = null;
+      });
+    }
+    return this.loginPromise;
+  }
+
+  async refreshAuthenticated() {
+    this.assertCircuitClosed();
+    if (!this.auth?.UID || !this.auth?.RefreshToken) {
+      throw new Error("Proton Session 缺少 UID/RefreshToken，需要重新登录");
+    }
+    if (!this.refreshPromise) {
+      const previous = { ...this.auth };
+      this.refreshPromise = (async () => {
+        try {
+          const refreshed = await this.raw("/auth/v4/refresh", {
+            method: "POST",
+            body: {
+              UID: previous.UID,
+              RefreshToken: previous.RefreshToken,
+              ResponseType: "token",
+              GrantType: "refresh_token",
+              RedirectURI: PROTON_REFRESH_REDIRECT_URI,
+              State: randomState(),
+              AccessToken: previous.AccessToken || undefined,
+            },
+          });
+          if (!refreshed.AccessToken) throw new Error("Proton refresh 成功响应缺少 AccessToken");
+          this.auth = {
+            ...previous,
+            ...refreshed,
+            UID: refreshed.UID || previous.UID,
+            AccessToken: refreshed.AccessToken,
+            RefreshToken: refreshed.RefreshToken || previous.RefreshToken,
+          };
+          return this.auth;
+        } catch (error) {
+          if ([400, 401, 422].includes(Number(error?.status))) {
+            this.clearSession();
+          }
+          throw error;
+        }
+      })().finally(() => {
+        this.refreshPromise = null;
+      });
+    }
+    return this.refreshPromise;
   }
 
   async ensureKeys() {
