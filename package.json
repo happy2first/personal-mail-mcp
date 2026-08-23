@@ -1,15 +1,17 @@
 {
   "name": "personal-mail-mcp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check src/index.js && node --check src/mail-config.js && node --check src/mail-sockets.js",
+    "check": "node --check src/index.js && node --check src/mail-config.js && node --check src/mail-sockets.js && node --check src/proton/srp.js && node --check src/proton/client.js && node --check src/proton/provider.js && node --check src/proton/session.js",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "2.0.0",
+    "@protontech/openpgp": "6.3.1",
     "agents": "0.20.1",
+    "bcryptjs": "3.0.2",
     "jose": "6.2.8",
     "mailparser": "3.9.15",
     "nodemailer": "9.0.5",

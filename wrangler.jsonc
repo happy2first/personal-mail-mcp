@@ -10,5 +10,21 @@
   "observability": {
     "enabled": true
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PROTON_SESSIONS",
+        "class_name": "ProtonSession"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "ProtonSession"
+      ]
+    }
+  ],
   "keep_vars": true
 }

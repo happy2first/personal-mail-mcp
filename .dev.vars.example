@@ -3,7 +3,7 @@ TEAM_DOMAIN=https://example.cloudflareaccess.com
 POLICY_AUD=replace-with-cloudflare-access-application-aud
 
 # Enabled accounts
-MAIL_ACCOUNTS=qq,163main,gmail
+MAIL_ACCOUNTS=qq,163main,gmail,proton1,proton2
 
 # QQ Mail
 MAIL_QQ_PROVIDER=qq
@@ -22,3 +22,19 @@ MAIL_GMAIL_PROVIDER=gmail
 MAIL_GMAIL_LABEL=Gmail
 MAIL_GMAIL_EMAIL=your-address@gmail.com
 MAIL_GMAIL_CREDENTIAL=replace-with-google-app-password
+
+# Proton Mail account 1 (EMAIL/CREDENTIAL should be Cloudflare Secrets in production)
+MAIL_PROTON1_PROVIDER=proton
+MAIL_PROTON1_LABEL=Proton 1
+MAIL_PROTON1_EMAIL=your-address@proton.me
+MAIL_PROTON1_CREDENTIAL=replace-with-proton-password
+
+# Proton Mail account 2
+MAIL_PROTON2_PROVIDER=proton
+MAIL_PROTON2_LABEL=Proton 2
+MAIL_PROTON2_EMAIL=your-second-address@proton.me
+MAIL_PROTON2_CREDENTIAL=replace-with-proton-password
+
+# Optional Proton compatibility overrides; normally leave unset.
+# PROTON_APP_VERSION=macos-bridge@3.24.1
+# PROTON_API_BASE=https://mail.proton.me/api

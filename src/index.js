@@ -6,6 +6,16 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { z } from "zod";
 import { WorkerImapClient, WorkerSmtpTransport } from "./mail-sockets.js";
 import { getAccount, listAccountIds, listAccounts } from "./mail-config.js";
+import {
+  isProtonAccount,
+  protonFolderStatus,
+  protonGetMessage,
+  protonListFolders,
+  protonListMessages,
+  protonSearchMessages,
+  protonTestConnection,
+} from "./proton/provider.js";
+export { ProtonSession } from "./proton/session.js";
 
 const MAX_MAIL_BYTES = 8 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -46,17 +56,24 @@ const attachment = z.object({
   base64: z.string().min(1),
 });
 
-function encodeMessageRef(account, folderName, messageUid) {
-  return Buffer.from(JSON.stringify({ a: account, f: folderName, u: messageUid }), "utf8").toString("base64url");
+function encodeMessageRef(account, folderName, messageId) {
+  const payload = Number.isInteger(messageId)
+    ? { a: account, f: folderName, u: messageId }
+    : { a: account, f: folderName, i: String(messageId) };
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
 function decodeMessageRef(ref) {
   try {
     const parsed = JSON.parse(Buffer.from(String(ref), "base64url").toString("utf8"));
-    if (!parsed || typeof parsed.a !== "string" || typeof parsed.f !== "string" || !Number.isInteger(parsed.u) || parsed.u <= 0) {
-      throw new Error("invalid");
+    if (!parsed || typeof parsed.a !== "string" || typeof parsed.f !== "string") throw new Error("invalid");
+    if (Number.isInteger(parsed.u) && parsed.u > 0) {
+      return { account: parsed.a, folder: parsed.f, uid: parsed.u };
     }
-    return { account: parsed.a, folder: parsed.f, uid: parsed.u };
+    if (typeof parsed.i === "string" && parsed.i.length > 0) {
+      return { account: parsed.a, folder: parsed.f, messageId: parsed.i };
+    }
+    throw new Error("invalid");
   } catch {
     throw new Error("messageRef 无效");
   }
@@ -93,6 +110,13 @@ function normalize(message, cfg, folderName) {
   };
 }
 
+function normalizeProtonMessages(messages, cfg, folderName) {
+  return (messages || []).map((message) => ({
+    ...message,
+    messageRef: encodeMessageRef(cfg.id, folderName, message.protonId),
+  }));
+}
+
 function sortMessages(messages) {
   return messages.sort((a, b) => {
     const at = a.date ? new Date(a.date).getTime() : 0;
@@ -102,6 +126,7 @@ function sortMessages(messages) {
 }
 
 async function withImapConfig(cfg, fn) {
+  if (isProtonAccount(cfg)) throw new Error("Proton 当前仅支持只读收件能力，不提供 IMAP 写操作");
   const client = new WorkerImapClient({
     host: cfg.imap.host,
     port: cfg.imap.port,
@@ -128,6 +153,7 @@ async function withImap(env, accountId, fn) {
 }
 
 function smtpConfig(cfg) {
+  if (isProtonAccount(cfg)) throw new Error("Proton 当前仅支持只读收件能力，不提供 SMTP 发信");
   return new WorkerSmtpTransport({
     host: cfg.smtp.host,
     port: cfg.smtp.port,
@@ -256,7 +282,10 @@ async function verifyAccess(request, env) {
   return (await jwtVerify(token, JWKS, { issuer: team, audience: aud })).payload;
 }
 
-async function listMessagesForAccount(cfg, folderName, limit) {
+async function listMessagesForAccount(env, cfg, folderName, limit) {
+  if (isProtonAccount(cfg)) {
+    return normalizeProtonMessages(await protonListMessages(env, cfg, folderName, limit), cfg, folderName);
+  }
   return withImapConfig(cfg, async (c) => {
     const lock = await c.getMailboxLock(folderName, { readOnly: true });
     try {
@@ -271,7 +300,10 @@ async function listMessagesForAccount(cfg, folderName, limit) {
   });
 }
 
-async function searchMessagesForAccount(cfg, p) {
+async function searchMessagesForAccount(env, cfg, p) {
+  if (isProtonAccount(cfg)) {
+    return normalizeProtonMessages(await protonSearchMessages(env, cfg, p), cfg, p.folder);
+  }
   return withImapConfig(cfg, async (c) => {
     const lock = await c.getMailboxLock(p.folder, { readOnly: true });
     try {
@@ -298,7 +330,7 @@ async function searchMessagesForAccount(cfg, p) {
 }
 
 function createServer(env) {
-  const s = new McpServer({ name: "personal-mail-mcp", version: "1.1.0" });
+  const s = new McpServer({ name: "personal-mail-mcp", version: "1.2.0" });
 
   s.registerTool("mail_list_accounts", {
     description: "[只读] 列出当前 Worker 已配置的邮箱账号及 Provider，不返回邮箱地址、密码或授权码。",
@@ -306,10 +338,11 @@ function createServer(env) {
   }, async () => result(listAccounts(env)));
 
   s.registerTool("mail_test_connection", {
-    description: "[只读] 测试一个或全部邮箱账号的 IMAP 与 SMTP 登录，不发送邮件。account 不填时默认 all。",
+    description: "[只读] 测试一个或全部邮箱账号连接；IMAP/SMTP 账号验证登录，Proton 验证 Proton API 登录。account 不填时默认 all。",
     inputSchema: { account: queryAccount },
   }, async ({ account }) => {
     const run = await forAccounts(env, account, async (cfg) => {
+      if (isProtonAccount(cfg)) return protonTestConnection(env, cfg);
       const imap = await withImapConfig(cfg, async (c) => ({
         authenticated: !!c.authenticated,
         secure: c.secureConnection,
@@ -334,16 +367,19 @@ function createServer(env) {
     description: "[只读] 列出一个或全部邮箱账号的文件夹及邮件数、未读数。account 不填时默认 all。",
     inputSchema: { account: queryAccount },
   }, async ({ account }) => {
-    const run = await forAccounts(env, account, async (cfg) => withImapConfig(cfg, async (c) => (
-      await c.list({ statusQuery: { messages: true, unseen: true } })
-    ).map((f) => ({
-      path: f.path,
-      name: f.name,
-      specialUse: f.specialUse || null,
-      subscribed: !!f.subscribed,
-      messages: f.status?.messages ?? null,
-      unseen: f.status?.unseen ?? null,
-    }))));
+    const run = await forAccounts(env, account, async (cfg) => {
+      if (isProtonAccount(cfg)) return protonListFolders(env, cfg);
+      return withImapConfig(cfg, async (c) => (
+        await c.list({ statusQuery: { messages: true, unseen: true } })
+      ).map((f) => ({
+        path: f.path,
+        name: f.name,
+        specialUse: f.specialUse || null,
+        subscribed: !!f.subscribed,
+        messages: f.status?.messages ?? null,
+        unseen: f.status?.unseen ?? null,
+      })));
+    });
     if (!run.all) return result(run.value);
     return result({
       accounts: run.values.map((x) => ({ account: x.id, accountLabel: x.label, folders: x.value })),
@@ -355,13 +391,16 @@ function createServer(env) {
     description: "[只读] 查看一个或全部邮箱账号的指定文件夹状态与邮箱配额。account 不填时默认 all。",
     inputSchema: { account: queryAccount, folder },
   }, async ({ account, folder: folderName }) => {
-    const run = await forAccounts(env, account, async (cfg) => withImapConfig(cfg, async (c) => ({
-      account: cfg.id,
-      accountLabel: cfg.label,
-      folder: folderName,
-      status: await c.status(folderName, { messages: true, unseen: true, uidNext: true, uidValidity: true, size: true }),
-      quota: (await c.getQuota(folderName)) || null,
-    })));
+    const run = await forAccounts(env, account, async (cfg) => {
+      if (isProtonAccount(cfg)) return protonFolderStatus(env, cfg, folderName);
+      return withImapConfig(cfg, async (c) => ({
+        account: cfg.id,
+        accountLabel: cfg.label,
+        folder: folderName,
+        status: await c.status(folderName, { messages: true, unseen: true, uidNext: true, uidValidity: true, size: true }),
+        quota: (await c.getQuota(folderName)) || null,
+      }));
+    });
     if (!run.all) return result(run.value);
     return result({ accounts: run.values.map((x) => x.value), errors: run.errors });
   });
@@ -374,14 +413,14 @@ function createServer(env) {
       limit: z.number().int().min(1).max(100).optional().default(20),
     },
   }, async ({ account, folder: folderName, limit }) => {
-    const run = await forAccounts(env, account, (cfg) => listMessagesForAccount(cfg, folderName, limit));
+    const run = await forAccounts(env, account, (cfg) => listMessagesForAccount(env, cfg, folderName, limit));
     if (!run.all) return result(run.value);
     const messages = sortMessages(run.values.flatMap((x) => x.value)).slice(0, limit);
     return result({ messages, errors: run.errors });
   });
 
   s.registerTool("mail_search_messages", {
-    description: "[只读] 在一个或全部邮箱账号中按关键词、发件人、收件人、主题、日期、已读和星标状态搜索；跨账号结果按时间合并排序。account 不填时默认 all。",
+    description: "[只读] 在一个或全部邮箱账号中按关键词、发件人、收件人、主题、日期、已读和星标状态搜索；跨账号结果按时间合并排序。Proton 第一版的 text 搜索仅覆盖标题和地址元数据，不扫描正文。",
     inputSchema: {
       account: queryAccount,
       folder,
@@ -396,14 +435,14 @@ function createServer(env) {
       limit: z.number().int().min(1).max(100).optional().default(20),
     },
   }, async (p) => {
-    const run = await forAccounts(env, p.account, (cfg) => searchMessagesForAccount(cfg, p));
+    const run = await forAccounts(env, p.account, (cfg) => searchMessagesForAccount(env, cfg, p));
     if (!run.all) return result(run.value);
     const messages = sortMessages(run.values.flatMap((x) => x.value)).slice(0, p.limit);
     return result({ messages, errors: run.errors });
   });
 
   s.registerTool("mail_get_message", {
-    description: "[只读] 读取邮件正文、HTML 与附件元数据。优先传 messageRef；兼容 account + folder + uid。",
+    description: "[只读] 读取邮件正文、HTML 与附件元数据。优先传 messageRef；IMAP 兼容 account + folder + uid。",
     inputSchema: {
       messageRef,
       account: optionalSpecificAccount,
@@ -412,7 +451,16 @@ function createServer(env) {
     },
   }, async (p) => {
     const target = resolveMessageTarget(p);
-    return result(await withImap(env, target.account, async (c, cfg) => {
+    const cfg = getAccount(env, target.account);
+    if (isProtonAccount(cfg)) {
+      if (!target.messageId) throw new Error("Proton 邮件请使用 mail_list_messages 返回的 messageRef");
+      const message = await protonGetMessage(env, cfg, target.messageId, target.folder);
+      return result({
+        ...message,
+        messageRef: encodeMessageRef(cfg.id, target.folder, target.messageId),
+      });
+    }
+    return result(await withImapConfig(cfg, async (c) => {
       const { message, parsed } = await readParsed(c, target.folder, target.uid);
       return {
         ...normalize(message, cfg, target.folder),
@@ -432,7 +480,7 @@ function createServer(env) {
   });
 
   s.registerTool("mail_get_attachment", {
-    description: "[只读] 获取邮件附件并以 Base64 返回，单附件最多 5MB。优先传 messageRef。",
+    description: "[只读] 获取邮件附件并以 Base64 返回，单附件最多 5MB。Proton 第一版暂不支持附件内容下载。",
     inputSchema: {
       messageRef,
       account: optionalSpecificAccount,
@@ -442,7 +490,9 @@ function createServer(env) {
     },
   }, async (p) => {
     const target = resolveMessageTarget(p);
-    return result(await withImap(env, target.account, async (c) => {
+    const cfg = getAccount(env, target.account);
+    if (isProtonAccount(cfg)) throw new Error("Proton 第一版暂不支持附件内容下载，仅返回附件元数据");
+    return result(await withImapConfig(cfg, async (c) => {
       const { parsed } = await readParsed(c, target.folder, target.uid);
       const a = parsed.attachments[p.attachmentIndex];
       if (!a) throw new Error("附件不存在");
@@ -458,7 +508,7 @@ function createServer(env) {
   });
 
   s.registerTool("mail_set_state", {
-    description: "[写] 修改具体邮件状态：已读、未读、加星、取消星标。优先传 messageRef；不支持 account=all。",
+    description: "[写] 修改具体邮件状态：已读、未读、加星、取消星标。优先传 messageRef；不支持 account=all；Proton 第一版只读。",
     inputSchema: {
       messageRef,
       account: optionalSpecificAccount,
@@ -493,7 +543,7 @@ function createServer(env) {
   });
 
   s.registerTool("mail_transfer", {
-    description: "[写] 复制或移动具体邮件，可用于归档；禁止目标为已删除/Trash。优先传 messageRef。",
+    description: "[写] 复制或移动具体邮件，可用于归档；禁止目标为已删除/Trash；Proton 第一版只读。优先传 messageRef。",
     inputSchema: {
       messageRef,
       account: optionalSpecificAccount,
@@ -525,7 +575,7 @@ function createServer(env) {
   });
 
   s.registerTool("mail_manage_folder", {
-    description: "[写] 在指定邮箱账号中创建、重命名、订阅或取消订阅文件夹；不提供删除文件夹。",
+    description: "[写] 在指定邮箱账号中创建、重命名、订阅或取消订阅文件夹；不提供删除文件夹；Proton 第一版只读。",
     inputSchema: {
       account: specificAccount,
       action: z.enum(["create", "rename", "subscribe", "unsubscribe"]),
@@ -547,7 +597,7 @@ function createServer(env) {
   })));
 
   s.registerTool("mail_send", {
-    description: "[高风险写] 从明确指定的邮箱账号发送新邮件，支持 To/Cc/Bcc、文本/HTML 和 Base64 附件。",
+    description: "[高风险写] 从明确指定的邮箱账号发送新邮件，支持 To/Cc/Bcc、文本/HTML 和 Base64 附件；Proton 第一版不支持发送。",
     inputSchema: {
       account: specificAccount,
       to: emails,
@@ -584,7 +634,7 @@ function createServer(env) {
   });
 
   s.registerTool("mail_reply", {
-    description: "[高风险写] 回复或回复全部；优先传 messageRef；成功后给原邮件添加 Answered 标记。",
+    description: "[高风险写] 回复或回复全部；优先传 messageRef；成功后给原邮件添加 Answered 标记；Proton 第一版不支持。",
     inputSchema: {
       messageRef,
       account: optionalSpecificAccount,
@@ -628,7 +678,7 @@ function createServer(env) {
   });
 
   s.registerTool("mail_forward", {
-    description: "[高风险写] 转发具体邮件，可选择带上原附件。优先传 messageRef。",
+    description: "[高风险写] 转发具体邮件，可选择带上原附件。优先传 messageRef；Proton 第一版不支持。",
     inputSchema: {
       messageRef,
       account: optionalSpecificAccount,
@@ -680,7 +730,7 @@ function createServer(env) {
   });
 
   s.registerTool("mail_save_draft", {
-    description: "[写] 在明确指定的邮箱账号中保存草稿，不发送；支持正文和附件。",
+    description: "[写] 在明确指定的邮箱账号中保存草稿，不发送；支持正文和附件；Proton 第一版不支持。",
     inputSchema: {
       account: specificAccount,
       to: z.array(z.string().email()).optional().default([]),
@@ -730,7 +780,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/") {
-      return Response.json({ ok: true, service: "personal-mail-mcp", version: "1.1.0" });
+      return Response.json({ ok: true, service: "personal-mail-mcp", version: "1.2.0" });
     }
     if (url.pathname !== "/mcp" && url.pathname !== "/health") {
       return new Response("Not Found", { status: 404 });
@@ -750,7 +800,7 @@ export default {
       return Response.json({
         ok: true,
         service: "personal-mail-mcp",
-        version: "1.1.0",
+        version: "1.2.0",
         user: identity.email || identity.sub || "authenticated",
       });
     }
