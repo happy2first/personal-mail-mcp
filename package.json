@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check src/entry.js && node --check src/index.js && node --check src/mail-config.js && node --check src/mail-sockets.js && node --check src/proton/srp.js && node --check src/proton/client.js && node --check src/proton/client-v2.js && node --check src/proton/write.js && node --check src/proton/provider.js && node --check src/proton/session.js && node --check src/proton/session-crypto.js && node --check src/proton/verify.js && npm test",
+    "check": "node --check src/entry.js && node --check src/index.js && node --check src/mail-config.js && node --check src/mail-sockets.js && node --check src/proton/srp.js && node --check src/proton/client.js && node --check src/proton/cookies.js && node --check src/proton/client-v2.js && node --check src/proton/write.js && node --check src/proton/provider.js && node --check src/proton/session.js && node --check src/proton/session-crypto.js && node --check src/proton/verify.js && npm test",
     "deploy": "wrangler deploy"
   },
   "dependencies": {
