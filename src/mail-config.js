@@ -16,51 +16,31 @@ const PROVIDERS = {
     imap: { host: "imap.gmail.com", port: 993, security: "tls" },
     smtp: { host: "smtp.gmail.com", port: 465, security: "tls" },
   },
-  proton: {
-    label: "Proton Mail",
-  },
+  proton: { label: "Proton Mail" },
 };
 
 const ID_RE = /^[a-z0-9_]+$/i;
 const SECURITY = new Set(["tls", "starttls"]);
 
 function must(value, name) {
-  if (value === undefined || value === null || String(value).trim() === "") {
-    throw new Error(`缺少配置：${name}`);
-  }
+  if (value === undefined || value === null || String(value).trim() === "") throw new Error(`缺少配置：${name}`);
   return String(value).trim();
 }
-
 function parsePort(value, name) {
   const port = Number(must(value, name));
-  if (!Number.isInteger(port) || port < 1 || port > 65535 || port === 25) {
-    throw new Error(`${name} 端口无效或不允许`);
-  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || port === 25) throw new Error(`${name} 端口无效或不允许`);
   return port;
 }
-
 function parseSecurity(value, name) {
   const security = must(value, name).toLowerCase();
-  if (!SECURITY.has(security)) {
-    throw new Error(`${name} 仅支持 tls 或 starttls`);
-  }
+  if (!SECURITY.has(security)) throw new Error(`${name} 仅支持 tls 或 starttls`);
   return security;
 }
-
-function prefixFor(id) {
-  return `MAIL_${id.toUpperCase()}`;
-}
+function prefixFor(id) { return `MAIL_${id.toUpperCase()}`; }
 
 export function listAccountIds(env) {
-  const ids = must(env.MAIL_ACCOUNTS, "MAIL_ACCOUNTS")
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
-
-  if (!ids.length) {
-    throw new Error("MAIL_ACCOUNTS 至少需要配置一个邮箱账号 ID");
-  }
-
+  const ids = must(env.MAIL_ACCOUNTS, "MAIL_ACCOUNTS").split(",").map((x) => x.trim()).filter(Boolean);
+  if (!ids.length) throw new Error("MAIL_ACCOUNTS 至少需要配置一个邮箱账号 ID");
   const seen = new Set();
   for (const id of ids) {
     if (!ID_RE.test(id)) throw new Error(`邮箱账号 ID 无效：${id}`);
@@ -77,24 +57,23 @@ export function getAccount(env, id) {
   const ids = listAccountIds(env);
   const actualId = ids.find((x) => x.toLowerCase() === accountId.toLowerCase());
   if (!actualId) throw new Error(`未配置邮箱账号：${accountId}`);
-
   const prefix = prefixFor(actualId);
   const provider = must(env[`${prefix}_PROVIDER`], `${prefix}_PROVIDER`).toLowerCase();
-  if (!["qq", "163", "gmail", "custom", "proton"].includes(provider)) {
-    throw new Error(`不支持的邮箱 Provider：${provider}`);
-  }
+  if (!["qq", "163", "gmail", "custom", "proton"].includes(provider)) throw new Error(`不支持的邮箱 Provider：${provider}`);
 
   const email = must(env[`${prefix}_EMAIL`], `${prefix}_EMAIL`);
   const credential = must(env[`${prefix}_CREDENTIAL`], `${prefix}_CREDENTIAL`);
   const label = String(env[`${prefix}_LABEL`] || PROVIDERS[provider]?.label || actualId).trim();
 
   if (provider === "proton") {
+    const mailboxPassword = String(env[`${prefix}_MAILBOX_PASSWORD`] || "").trim() || null;
     return {
       id: actualId,
       label: label || actualId,
       provider,
       email,
       credential,
+      mailboxPassword,
       imap: null,
       smtp: null,
     };
@@ -117,16 +96,7 @@ export function getAccount(env, id) {
     imap = { ...PROVIDERS[provider].imap };
     smtp = { ...PROVIDERS[provider].smtp };
   }
-
-  return {
-    id: actualId,
-    label: label || actualId,
-    provider,
-    email,
-    credential,
-    imap,
-    smtp,
-  };
+  return { id: actualId, label: label || actualId, provider, email, credential, imap, smtp };
 }
 
 export function listAccounts(env) {
@@ -142,7 +112,8 @@ export function listAccounts(env) {
           protonApi: true,
           imap: false,
           smtp: false,
-          readOnly: true,
+          readOnly: false,
+          capabilities: ["read", "attachment", "state", "move-copy", "draft", "send", "reply", "forward", "events", "2fa", "human-verification"],
         };
       }
       return {
