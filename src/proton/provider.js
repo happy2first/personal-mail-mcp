@@ -5,6 +5,12 @@ function requireBinding(env) {
   return env.PROTON_SESSIONS;
 }
 
+function protonCallTimeoutMs(env, action) {
+  const configured = Number(env.PROTON_CALL_TIMEOUT_MS || 0);
+  if (Number.isFinite(configured) && configured >= 5000 && configured <= 120000) return configured;
+  return action === "reauthorize" ? 20000 : 25000;
+}
+
 export function protonSessionStub(env, accountId) {
   const namespace = requireBinding(env);
   const id = namespace.idFromName(String(accountId).toLowerCase());
@@ -14,12 +20,35 @@ export function protonSessionStub(env, accountId) {
 export async function protonCall(env, cfgOrAccount, action, payload = {}) {
   const account = typeof cfgOrAccount === "string" ? cfgOrAccount : cfgOrAccount.id;
   const stub = protonSessionStub(env, account);
-  const response = await stub.fetch("https://proton-session.internal/action", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ account, action, payload }),
-  });
-  const body = await response.json();
+  const timeoutMs = protonCallTimeoutMs(env, action);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await stub.fetch("https://proton-session.internal/action", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ account, action, payload }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeout = new Error(`Proton ${action} 调用超过 ${timeoutMs}ms，已停止等待；请先调用 mail_proton_auth action=status 查看 lastAuthAttempt，不要直接重试登录`);
+      timeout.protonCallTimeout = true;
+      timeout.timeoutMs = timeoutMs;
+      throw timeout;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error(`Proton DO 返回不可解析响应（HTTP ${response.status}）`);
+  }
   if (!response.ok || !body?.ok) {
     const error = new Error(body?.error || `Proton DO 调用失败（HTTP ${response.status}）`);
     for (const key of [
