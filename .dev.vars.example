@@ -28,13 +28,25 @@ MAIL_PROTON1_PROVIDER=proton
 MAIL_PROTON1_LABEL=Proton 1
 MAIL_PROTON1_EMAIL=your-address@proton.me
 MAIL_PROTON1_CREDENTIAL=replace-with-proton-password
+# Only for legacy/two-password Proton accounts:
+# MAIL_PROTON1_MAILBOX_PASSWORD=replace-with-mailbox-password
 
 # Proton Mail account 2
 MAIL_PROTON2_PROVIDER=proton
 MAIL_PROTON2_LABEL=Proton 2
 MAIL_PROTON2_EMAIL=your-second-address@proton.me
 MAIL_PROTON2_CREDENTIAL=replace-with-proton-password
+# MAIL_PROTON2_MAILBOX_PASSWORD=replace-with-mailbox-password
+
+# REQUIRED for durable Proton sessions. Configure as a Cloudflare Secret.
+# Generate a random value, e.g. `openssl rand -base64 32`.
+PROTON_SESSION_KEY=replace-with-random-session-encryption-secret
+
+# REQUIRED for clickable Proton CAPTCHA / human-verification links.
+# Use the public origin of this Worker (custom domain recommended), no trailing slash.
+PROTON_VERIFY_BASE_URL=https://mail.mcp.example.com
 
 # Optional Proton compatibility overrides; normally leave unset.
+# The default app version is macos-bridge@3.24.1. AppVersion spoofing is NOT relied upon for risk control.
 # PROTON_APP_VERSION=macos-bridge@3.24.1
 # PROTON_API_BASE=https://mail.proton.me/api
