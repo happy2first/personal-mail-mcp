@@ -3,6 +3,7 @@ import {
 } from "@protontech/openpgp";
 import { ProtonClient as LegacyProtonClient } from "./client.js";
 import { computeKeyPassword, getSrp } from "./srp.js";
+import { cookieHeaderForUrl, getSetCookieHeaders, mergeSetCookieHeaders, normalizeCookieState } from "./cookies.js";
 import { forward, reply, saveDraft, sendMail } from "./write.js";
 
 const PROTON_REFRESH_REDIRECT_URI = "https://protonmail.ch";
@@ -44,12 +45,26 @@ function parseHumanVerification(payload) {
   const token = details?.HumanVerificationToken ?? payload?.HumanVerificationToken;
   return token && Array.isArray(methods) ? { token: String(token), methods: methods.map(String) } : null;
 }
-function apiError(payload, status) {
+function parseRetryAfterSeconds(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  const at = Date.parse(raw);
+  if (!Number.isFinite(at)) return null;
+  return Math.max(0, Math.ceil((at - Date.now()) / 1000));
+}
+function apiError(payload, status, meta = {}) {
   const code = Number(payload?.Code ?? payload?.code ?? status);
   const message = payload?.Error ?? payload?.error ?? payload?.Message ?? payload?.message ?? `HTTP ${status}`;
   const error = new Error(`Proton API ${code}: ${message}`);
-  error.status = status; error.protonCode = code; error.details = payload?.Details ?? payload?.details ?? null;
-  error.humanVerification = parseHumanVerification(payload); error.fromApi = true;
+  error.status = status;
+  error.protonCode = code;
+  error.details = payload?.Details ?? payload?.details ?? null;
+  error.humanVerification = parseHumanVerification(payload);
+  error.fromApi = true;
+  if (meta.requestPath) error.requestPath = meta.requestPath;
+  if (meta.requestMethod) error.requestMethod = meta.requestMethod;
+  if (Number.isFinite(meta.serverRetryAfterSeconds)) error.serverRetryAfterSeconds = meta.serverRetryAfterSeconds;
   return error;
 }
 function isApiSuccess(payload, status) {
@@ -79,11 +94,24 @@ export class ProtonClient extends LegacyProtonClient {
   constructor(cfg, env) {
     super(cfg, env);
     this.humanVerification = null;
+    this.cookieState = [];
+    this.cookiePersistence = null;
+    this.authStageCallback = null;
   }
 
   setAuth(auth) { this.auth = auth ? normalizedAuth(auth) : null; }
   setHumanVerification(v) {
     this.humanVerification = v?.token ? { token: String(v.token), type: String(v.type || "captcha") } : null;
+  }
+  setCookieState(state) { this.cookieState = normalizeCookieState(state); }
+  getCookieState() {
+    this.cookieState = normalizeCookieState(this.cookieState);
+    return this.cookieState.map((cookie) => ({ ...cookie }));
+  }
+  setCookiePersistence(fn) { this.cookiePersistence = typeof fn === "function" ? fn : null; }
+  setAuthStageCallback(fn) { this.authStageCallback = typeof fn === "function" ? fn : null; }
+  async noteAuthStage(stage) {
+    if (this.authStageCallback) await this.authStageCallback(stage);
   }
   baseHeaders() {
     const headers = super.baseHeaders();
@@ -94,20 +122,45 @@ export class ProtonClient extends LegacyProtonClient {
     return headers;
   }
 
+  async captureResponseCookies(response, requestUrl) {
+    const setCookies = getSetCookieHeaders(response?.headers);
+    if (!setCookies.length) return;
+    const next = mergeSetCookieHeaders(this.cookieState, setCookies, requestUrl);
+    if (JSON.stringify(next) === JSON.stringify(this.cookieState)) return;
+    this.cookieState = next;
+    if (this.cookiePersistence) await this.cookiePersistence(this.getCookieState());
+  }
+
   async raw(path, { method = "GET", body, auth = false, headers = {}, responseType = "json" } = {}) {
     const isForm = typeof FormData !== "undefined" && body instanceof FormData;
+    const requestUrl = `${this.baseUrl}${path}`;
     const requestHeaders = { ...(auth ? this.authHeaders() : this.baseHeaders()), ...headers };
     if (isForm) { delete requestHeaders["content-type"]; delete requestHeaders["Content-Type"]; }
-    const response = await fetch(`${this.baseUrl}${path}`, {
+    const cookie = cookieHeaderForUrl(this.cookieState, requestUrl);
+    if (cookie && requestHeaders.cookie === undefined && requestHeaders.Cookie === undefined) requestHeaders.cookie = cookie;
+    const response = await fetch(requestUrl, {
       method, headers: requestHeaders,
       body: body === undefined ? undefined : (isForm || typeof body === "string" || body instanceof Uint8Array ? body : JSON.stringify(body)),
     });
+    await this.captureResponseCookies(response, requestUrl);
     const contentType = String(response.headers.get("content-type") || "").toLowerCase();
     if (responseType === "binary" && response.ok && !contentType.includes("json")) return new Uint8Array(await response.arrayBuffer());
     let payload;
     try { payload = contentType.includes("json") ? await response.json() : JSON.parse(await response.text()); }
-    catch { throw new Error(`Proton API 返回不可解析响应（HTTP ${response.status}）`); }
-    if (!isApiSuccess(payload, response.status)) throw apiError(payload, response.status);
+    catch {
+      const error = new Error(`Proton API 返回不可解析响应（HTTP ${response.status}）`);
+      error.status = response.status;
+      error.requestPath = path;
+      error.requestMethod = method;
+      throw error;
+    }
+    if (!isApiSuccess(payload, response.status)) {
+      throw apiError(payload, response.status, {
+        requestPath: path,
+        requestMethod: method,
+        serverRetryAfterSeconds: parseRetryAfterSeconds(response.headers.get("retry-after")),
+      });
+    }
     return payload;
   }
 
@@ -115,13 +168,17 @@ export class ProtonClient extends LegacyProtonClient {
 
   async login({ twoFactorCode } = {}) {
     const username = this.cfg.email;
+    await this.noteAuthStage("auth_info_request");
     const info = await this.raw("/auth/v4/info", { method: "POST", body: { Username: username } });
+    await this.noteAuthStage("srp_compute");
     const proof = await getSrp(info, { username, password: this.cfg.credential });
+    await this.noteAuthStage("auth_submit");
     const auth = await this.raw("/auth/v4", {
       method: "POST",
       body: { Username: username, ClientProof: proof.clientProof, ClientEphemeral: proof.clientEphemeral, SRPSession: info.SRPSession },
     });
-    if (!b64Equal(auth.ServerProof, proof.expectedServerProof)) throw new Error("Proton SRP server proof 校验失败");
+    await this.noteAuthStage("server_proof_verify");
+    if (!b64Equal(auth.ServerProof, proof.expectedServerProof)) throw new Error("Proton SRP server proof校验失败");
     if (!auth.UID || !auth.AccessToken || !auth.RefreshToken) throw new Error("Proton 登录成功但缺少 UID/AccessToken/RefreshToken");
     this.auth = normalizedAuth(auth);
     const twoFA = Number(auth?.["2FA"]?.Enabled ?? auth?.TwoFA?.Enabled ?? 0);

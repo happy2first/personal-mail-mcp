@@ -3,6 +3,7 @@ import { ProtonClient } from "./client-v2.js";
 import { decryptJson, encryptJson, hasSessionEncryption } from "./session-crypto.js";
 
 const SESSION_KEY = "proton:session:v2";
+const COOKIE_KEY = "proton:cookies:v1";
 const EVENT_CURSOR_KEY = "proton:eventCursor:v1";
 const RISK_KEY = "proton:risk:v2";
 const AUTH_STATE_KEY = "proton:authState:v1";
@@ -22,14 +23,15 @@ function riskDelayMs(attempt) {
 function riskBlockError(risk) {
   const blockedUntil = Number(risk?.blockedUntil || 0);
   const manual = Boolean(risk?.manualResetRequired);
-  const retryAfterSeconds = manual || !blockedUntil
+  const localCooldownSeconds = manual || !blockedUntil
     ? undefined
     : Math.max(1, Math.ceil((blockedUntil - now()) / 1000));
   const error = new Error(manual
-    ? "Proton 2028 风控已进入人工恢复状态；后台任务不会继续密码登录，请先处理 Proton 账号后再执行 proton_auth reset_risk/reauthorize"
-    : `Proton 2028 风控熔断中：后台任务不会重试密码登录，请约 ${retryAfterSeconds} 秒后再试`);
+    ? "Proton 2028 后本地保护已进入人工恢复状态；后台任务不会继续密码登录。该状态是 Worker 本地策略，不代表 Proton 服务器给出的等待时间"
+    : `Proton 2028 后本地保护熔断中：后台任务不会自动重试密码登录；本地剩余保护时间约 ${localCooldownSeconds} 秒（不是 Proton 服务器 Retry-After）`);
   error.protonCode = 2028;
-  error.retryAfterSeconds = retryAfterSeconds;
+  error.localCooldownSeconds = localCooldownSeconds;
+  error.localPolicy = true;
   error.circuitOpen = true;
   error.manualResetRequired = manual;
   return error;
@@ -51,7 +53,11 @@ function publicError(error, env, account, verifyState) {
   return {
     error: error instanceof Error ? error.message : String(error),
     ...(Number(error?.protonCode) ? { protonCode: Number(error.protonCode) } : {}),
-    ...(Number(error?.retryAfterSeconds) ? { retryAfterSeconds: Number(error.retryAfterSeconds) } : {}),
+    ...(Number.isFinite(error?.serverRetryAfterSeconds) ? { serverRetryAfterSeconds: Number(error.serverRetryAfterSeconds) } : {}),
+    ...(Number.isFinite(error?.localCooldownSeconds) ? { localCooldownSeconds: Number(error.localCooldownSeconds) } : {}),
+    ...(error?.localPolicy ? { localPolicy: true } : {}),
+    ...(error?.requestPath ? { requestPath: String(error.requestPath) } : {}),
+    ...(error?.requestMethod ? { requestMethod: String(error.requestMethod) } : {}),
     ...(error?.circuitOpen ? { circuitOpen: true } : {}),
     ...(error?.manualResetRequired ? { manualResetRequired: true } : {}),
     ...(error?.twoFactorRequired ? { twoFactorRequired: true } : {}),
@@ -71,7 +77,11 @@ function compactAuthError(error) {
     message: error instanceof Error ? error.message : String(error),
     ...(Number(error?.protonCode) ? { protonCode: Number(error.protonCode) } : {}),
     ...(Number(error?.status) ? { httpStatus: Number(error.status) } : {}),
-    ...(Number(error?.retryAfterSeconds) ? { retryAfterSeconds: Number(error.retryAfterSeconds) } : {}),
+    ...(Number.isFinite(error?.serverRetryAfterSeconds) ? { serverRetryAfterSeconds: Number(error.serverRetryAfterSeconds) } : {}),
+    ...(Number.isFinite(error?.localCooldownSeconds) ? { localCooldownSeconds: Number(error.localCooldownSeconds) } : {}),
+    ...(error?.localPolicy ? { localPolicy: true } : {}),
+    ...(error?.requestPath ? { requestPath: String(error.requestPath) } : {}),
+    ...(error?.requestMethod ? { requestMethod: String(error.requestMethod) } : {}),
     ...(error?.twoFactorRequired ? { twoFactorRequired: true } : {}),
     ...(error?.humanVerification ? { humanVerificationRequired: true, methods: error.humanVerification.methods || [] } : {}),
   };
@@ -114,6 +124,14 @@ export class ProtonSession {
     if (this.hydrated) return;
     this.hydrated = true;
     const account = client.cfg.id;
+    client.setCookiePersistence(async (cookieState) => {
+      await this.writeEncrypted(COOKIE_KEY, account, cookieState);
+    });
+    const cookies = await this.readEncrypted(COOKIE_KEY, account).catch((error) => {
+      console.error("ProtonSession cookie decrypt:", error?.message || String(error));
+      return null;
+    });
+    client.setCookieState(cookies || []);
     const auth = await this.readEncrypted(SESSION_KEY, account).catch((error) => {
       console.error("ProtonSession session decrypt:", error?.message || String(error));
       return null;
@@ -126,6 +144,7 @@ export class ProtonSession {
   async persistClient(client) {
     const account = client.cfg.id;
     if (client.auth?.UID && client.auth?.RefreshToken) await this.writeEncrypted(SESSION_KEY, account, client.auth);
+    await this.writeEncrypted(COOKIE_KEY, account, client.getCookieState());
   }
 
   async clearPersistedSession(client) {
@@ -167,7 +186,7 @@ export class ProtonSession {
     if (!risk) return;
     if (risk.manualResetRequired) throw riskBlockError(risk);
     if (Number(risk.blockedUntil || 0) > now()) throw riskBlockError(risk);
-    if (Number(risk.blockedUntil || 0) > 0) await this.state.storage.put(RISK_KEY, { ...risk, blockedUntil: 0 });
+    if (Number(risk.blockedUntil || 0) > 0) await this.state.storage.put(RISK_KEY, { ...risk, blockedUntil: 0, policy: "local" });
   }
 
   async rememberRiskBlock(error) {
@@ -181,9 +200,11 @@ export class ProtonSession {
       lastAt: now(),
       blockedUntil: delay ? now() + delay : 0,
       manualResetRequired: delay === 0,
+      policy: "local",
     };
     await this.state.storage.put(RISK_KEY, risk);
-    error.retryAfterSeconds = delay ? Math.ceil(delay / 1000) : undefined;
+    error.localCooldownSeconds = delay ? Math.ceil(delay / 1000) : undefined;
+    error.localPolicy = true;
     error.manualResetRequired = risk.manualResetRequired;
     error.riskRemembered = true;
     return risk;
@@ -216,7 +237,8 @@ export class ProtonSession {
       twoFactorPending: Boolean(authState.twoFactorPending),
       reauthRequired: Boolean(authState.reauthRequired),
       lastAuthAttempt: authState.lastAuthAttempt || null,
-      risk: risk || null,
+      transport: { cookieCount: client.getCookieState().length },
+      risk: risk ? { ...risk, policy: "local" } : null,
       humanVerification: hv ? {
         pending: Boolean(hv.challengeToken && !hv.completedToken),
         methods: hv.methods || [],
@@ -322,10 +344,13 @@ export class ProtonSession {
           lastAuthAttempt: {
             attemptId,
             status: "running",
-            stage: "password_login",
+            stage: "starting",
             startedAt,
             lastUpdatedAt: startedAt,
           },
+        });
+        client.setAuthStageCallback(async (stage) => {
+          await this.updateAuthAttempt(attemptId, { status: "running", stage });
         });
         try {
           await this.initializeOrRestore(client, { allowPasswordLogin: true });
@@ -352,14 +377,20 @@ export class ProtonSession {
               : error?.humanVerification
                 ? "human_verification_required"
                 : "failed";
+            const current = await this.readAuthState();
+            const currentStage = current.lastAuthAttempt?.attemptId === attemptId
+              ? current.lastAuthAttempt?.stage || "unknown"
+              : "unknown";
             await this.updateAuthAttempt(attemptId, {
               status: attemptStatus,
-              stage: "password_login",
+              stage: currentStage,
               completedAt: now(),
               error: compactAuthError(error),
             }).catch(() => {});
             throw error;
           }
+        } finally {
+          client.setAuthStageCallback(null);
         }
       } else if (action === "submit2fa") {
         const code = String(payload.code || "").trim();

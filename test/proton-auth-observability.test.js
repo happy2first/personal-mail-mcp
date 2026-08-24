@@ -9,10 +9,11 @@ async function read(url) {
   return readFile(url, "utf8");
 }
 
-test("reauthorize persists an auth-attempt marker before password login", async () => {
+test("reauthorize persists an auth-attempt marker before staged password login", async () => {
   const text = await read(sessionUrl);
   assert.match(text, /status: "running"/);
-  assert.match(text, /stage: "password_login"/);
+  assert.match(text, /stage: "starting"/);
+  assert.match(text, /setAuthStageCallback/);
   assert.match(text, /lastAuthAttempt: authState\.lastAuthAttempt \|\| null/);
 });
 

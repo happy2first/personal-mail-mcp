@@ -52,7 +52,8 @@ export async function protonCall(env, cfgOrAccount, action, payload = {}) {
   if (!response.ok || !body?.ok) {
     const error = new Error(body?.error || `Proton DO 调用失败（HTTP ${response.status}）`);
     for (const key of [
-      "protonCode", "retryAfterSeconds", "circuitOpen", "manualResetRequired",
+      "protonCode", "serverRetryAfterSeconds", "localCooldownSeconds", "localPolicy",
+      "requestPath", "requestMethod", "circuitOpen", "manualResetRequired",
       "twoFactorRequired", "reauthRequired", "mailboxPasswordRequired",
       "humanVerificationRequired", "humanVerificationMethods", "verificationUrl", "verificationState",
     ]) {
