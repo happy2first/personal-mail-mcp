@@ -136,6 +136,7 @@ export class ProtonSession {
   }
 
   async rememberRiskBlock(error) {
+    if (error?.riskRemembered) return this.readRisk();
     if (Number(error?.protonCode) !== 2028 || error?.circuitOpen) return null;
     const previous = await this.readRisk();
     const attempt = Number(previous?.attempt || 0) + 1;
@@ -149,6 +150,7 @@ export class ProtonSession {
     await this.state.storage.put(RISK_KEY, risk);
     error.retryAfterSeconds = delay ? Math.ceil(delay / 1000) : undefined;
     error.manualResetRequired = risk.manualResetRequired;
+    error.riskRemembered = true;
     return risk;
   }
 
@@ -333,7 +335,10 @@ export class ProtonSession {
 
       return Response.json({ ok: true, data });
     } catch (error) {
-      if (client) verifyState = await this.rememberHumanVerification(error, client).catch(() => null);
+      if (client) {
+        await this.rememberRiskBlock(error).catch(() => {});
+        verifyState = await this.rememberHumanVerification(error, client).catch(() => null);
+      }
       console.error("ProtonSession:", error?.message || String(error));
       const details = publicError(error, this.env, account, verifyState);
       const status = Number(error?.protonCode) === 2028 ? 429 : 400;
