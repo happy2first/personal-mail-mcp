@@ -66,6 +66,17 @@ function publicError(error, env, account, verifyState) {
   };
 }
 
+function compactAuthError(error) {
+  return {
+    message: error instanceof Error ? error.message : String(error),
+    ...(Number(error?.protonCode) ? { protonCode: Number(error.protonCode) } : {}),
+    ...(Number(error?.status) ? { httpStatus: Number(error.status) } : {}),
+    ...(Number(error?.retryAfterSeconds) ? { retryAfterSeconds: Number(error.retryAfterSeconds) } : {}),
+    ...(error?.twoFactorRequired ? { twoFactorRequired: true } : {}),
+    ...(error?.humanVerification ? { humanVerificationRequired: true, methods: error.humanVerification.methods || [] } : {}),
+  };
+}
+
 export class ProtonSession {
   constructor(state, env) {
     this.state = state;
@@ -126,6 +137,30 @@ export class ProtonSession {
     return (await this.state.storage.get(RISK_KEY)) || null;
   }
 
+  async readAuthState() {
+    return (await this.state.storage.get(AUTH_STATE_KEY)) || {};
+  }
+
+  async patchAuthState(patch) {
+    const previous = await this.readAuthState();
+    const next = { ...previous, ...patch };
+    await this.state.storage.put(AUTH_STATE_KEY, next);
+    return next;
+  }
+
+  async updateAuthAttempt(attemptId, patch) {
+    const authState = await this.readAuthState();
+    const current = authState.lastAuthAttempt || {};
+    if (attemptId && current.attemptId && current.attemptId !== attemptId) return authState;
+    const lastAuthAttempt = {
+      ...current,
+      ...(attemptId ? { attemptId } : {}),
+      ...patch,
+      lastUpdatedAt: now(),
+    };
+    return this.patchAuthState({ lastAuthAttempt });
+  }
+
   async assertRiskCircuitClosed({ allowManual = false } = {}) {
     if (allowManual) return;
     const risk = await this.readRisk();
@@ -170,7 +205,7 @@ export class ProtonSession {
 
   async authStatus(client) {
     const risk = await this.readRisk();
-    const authState = (await this.state.storage.get(AUTH_STATE_KEY)) || {};
+    const authState = await this.readAuthState();
     const hv = await this.readEncrypted(HUMAN_VERIFY_KEY, client.cfg.id).catch(() => null);
     return {
       account: client.cfg.id,
@@ -180,6 +215,7 @@ export class ProtonSession {
       expiresAt: client.auth?.ExpiresAt || null,
       twoFactorPending: Boolean(authState.twoFactorPending),
       reauthRequired: Boolean(authState.reauthRequired),
+      lastAuthAttempt: authState.lastAuthAttempt || null,
       risk: risk || null,
       humanVerification: hv ? {
         pending: Boolean(hv.challengeToken && !hv.completedToken),
@@ -205,12 +241,12 @@ export class ProtonSession {
     try {
       await client.ensureAuthenticated({ allowPasswordLogin: true });
       await this.persistClient(client);
-      await this.state.storage.put(AUTH_STATE_KEY, { reauthRequired: false, twoFactorPending: false });
+      await this.patchAuthState({ reauthRequired: false, twoFactorPending: false });
       return client.auth;
     } catch (error) {
       if (error?.twoFactorRequired && client.auth?.UID) {
         await this.persistClient(client);
-        await this.state.storage.put(AUTH_STATE_KEY, { reauthRequired: false, twoFactorPending: true });
+        await this.patchAuthState({ reauthRequired: false, twoFactorPending: true });
       }
       throw error;
     }
@@ -228,7 +264,7 @@ export class ProtonSession {
       await this.persistClient(client).catch(() => {});
       if (error?.reauthRequired) {
         await this.clearPersistedSession(client);
-        await this.state.storage.put(AUTH_STATE_KEY, { reauthRequired: true, twoFactorPending: false });
+        await this.patchAuthState({ reauthRequired: true, twoFactorPending: false });
       }
       await this.rememberRiskBlock(error);
       throw error;
@@ -276,16 +312,54 @@ export class ProtonSession {
         await this.state.storage.delete(RISK_KEY);
         data = { success: true, account, riskReset: true };
       } else if (action === "reauthorize") {
+        const attemptId = crypto.randomUUID();
+        const startedAt = now();
         await this.state.storage.delete(SESSION_KEY);
-        await this.state.storage.delete(AUTH_STATE_KEY);
         client.clearSession();
+        await this.patchAuthState({
+          reauthRequired: false,
+          twoFactorPending: false,
+          lastAuthAttempt: {
+            attemptId,
+            status: "running",
+            stage: "password_login",
+            startedAt,
+            lastUpdatedAt: startedAt,
+          },
+        });
         try {
           await this.initializeOrRestore(client, { allowPasswordLogin: true });
           await this.state.storage.delete(RISK_KEY);
-          data = { success: true, account, authenticated: true, twoFactorRequired: false };
+          await this.updateAuthAttempt(attemptId, {
+            status: "succeeded",
+            stage: "authenticated",
+            completedAt: now(),
+            error: null,
+          });
+          data = { success: true, account, authenticated: true, twoFactorRequired: false, attemptId };
         } catch (error) {
-          if (error?.twoFactorRequired) data = { success: false, account, authenticated: false, twoFactorRequired: true };
-          else throw error;
+          if (error?.twoFactorRequired) {
+            await this.updateAuthAttempt(attemptId, {
+              status: "waiting_2fa",
+              stage: "two_factor",
+              error: compactAuthError(error),
+            });
+            data = { success: false, account, authenticated: false, twoFactorRequired: true, attemptId };
+          } else {
+            await this.rememberRiskBlock(error).catch(() => {});
+            const attemptStatus = Number(error?.protonCode) === 2028
+              ? "blocked_2028"
+              : error?.humanVerification
+                ? "human_verification_required"
+                : "failed";
+            await this.updateAuthAttempt(attemptId, {
+              status: attemptStatus,
+              stage: "password_login",
+              completedAt: now(),
+              error: compactAuthError(error),
+            }).catch(() => {});
+            throw error;
+          }
         }
       } else if (action === "submit2fa") {
         const code = String(payload.code || "").trim();
@@ -295,7 +369,13 @@ export class ProtonSession {
         if (!client.auth?.UID) throw twoFactorError();
         data = await client.submitTwoFactor(code);
         await this.persistClient(client);
-        await this.state.storage.put(AUTH_STATE_KEY, { reauthRequired: false, twoFactorPending: false });
+        const authState = await this.patchAuthState({ reauthRequired: false, twoFactorPending: false });
+        await this.updateAuthAttempt(authState.lastAuthAttempt?.attemptId, {
+          status: "succeeded",
+          stage: "authenticated",
+          completedAt: now(),
+          error: null,
+        });
       } else if (action === "getHumanVerificationChallenge") {
         const state = String(payload.state || "");
         const hv = await this.readEncrypted(HUMAN_VERIFY_KEY, account);
@@ -311,6 +391,12 @@ export class ProtonSession {
         const completed = { ...hv, completedToken: token, completedAt: now(), type: hv.type || "captcha" };
         await this.writeEncrypted(HUMAN_VERIFY_KEY, account, completed);
         client.setHumanVerification({ token, type: completed.type });
+        const authState = await this.readAuthState();
+        await this.updateAuthAttempt(authState.lastAuthAttempt?.attemptId, {
+          status: "verification_completed",
+          stage: "awaiting_reauthorize",
+          error: null,
+        });
         data = { success: true, account, completed: true };
       } else if (action === "pollEvents") {
         data = await this.pollEvents(client);
