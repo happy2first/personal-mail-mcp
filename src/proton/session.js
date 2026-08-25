@@ -356,11 +356,12 @@ export class ProtonSession {
     if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
     let client;
     let account = "";
+    let action = "";
     let verifyState = null;
     try {
       const body = await request.json();
       account = String(body?.account || "").trim();
-      const action = String(body?.action || "").trim();
+      action = String(body?.action || "").trim();
       const payload = body?.payload || {};
       if (!account) throw new Error("缺少 Proton account");
       client = this.getClient(account);
@@ -527,9 +528,7 @@ export class ProtonSession {
       return Response.json({ ok: true, data });
     } catch (error) {
       if (client) {
-        if (String((await request.clone().text().catch(() => "")) || "").includes('"action":"reauthorize"')) {
-          await this.rememberRiskBlock(error).catch(() => {});
-        }
+        if (action === "reauthorize") await this.rememberRiskBlock(error).catch(() => {});
         verifyState = await this.rememberHumanVerification(error, client).catch(() => null);
       }
       console.error("ProtonSession:", error?.message || String(error));
