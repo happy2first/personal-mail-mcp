@@ -6,6 +6,7 @@ const sessionUrl = new URL("../src/proton/session.js", import.meta.url);
 const importUrl = new URL("../src/proton/session-import.js", import.meta.url);
 const pageUrl = new URL("../src/proton/import-page.js", import.meta.url);
 const entryUrl = new URL("../src/entry.js", import.meta.url);
+const clientUrl = new URL("../src/proton/client-v2.js", import.meta.url);
 
 const read = (url) => readFile(url, "utf8");
 
@@ -26,7 +27,17 @@ test("Session import is atomic and local 2028 risk only gates password reauthori
   assert.match(text, /source: "manual_import"/);
   assert.match(text, /scope: "password_reauthorize_only"/);
   assert.match(text, /action === "reauthorize"\) \{\s*await this\.assertRiskCircuitClosed\(\)/s);
-  assert.doesNotMatch(text, /async runClientAction[\s\S]*?assertRiskCircuitClosed/);
+  const runStart = text.indexOf("async runClientAction");
+  const pollStart = text.indexOf("async pollEvents", runStart);
+  assert.ok(runStart >= 0 && pollStart > runStart);
+  assert.doesNotMatch(text.slice(runStart, pollStart), /assertRiskCircuitClosed/);
+});
+
+test("a transient Proton 2028 during refresh does not discard the imported Session", async () => {
+  const text = await read(clientUrl);
+  assert.match(text, /terminalRefreshFailure = Number\(error\?\.protonCode\) !== 2028/);
+  assert.match(text, /\[400, 401, 422\]\.includes\(Number\(error\?\.status\)\)/);
+  assert.match(text, /if \(terminalRefreshFailure\) \{\s*this\.clearSession\(\);\s*error\.reauthRequired = true;/s);
 });
 
 test("management page is Access-protected, CSRF-protected and never exposes stored token values", async () => {
