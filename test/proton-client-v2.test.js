@@ -138,6 +138,31 @@ test("invalid refresh never falls back to password login inside failed request",
   assert.equal(client.loginCalls, 1);
 });
 
+class RiskBlockedRefreshClient extends ProtonClient {
+  constructor() {
+    super(cfg, {});
+    this.auth = { UID: "uid", AccessToken: "old-access", RefreshToken: "valuable-refresh", ExpiresAt: Date.now() + 30000 };
+  }
+  async raw(path) {
+    if (path !== "/auth/v4/refresh") throw new Error(`unexpected path ${path}`);
+    const error = new Error("temporarily limited");
+    error.status = 422;
+    error.protonCode = 2028;
+    throw error;
+  }
+}
+
+test("Proton 2028 during refresh preserves the existing Session for a later retry", async () => {
+  const client = new RiskBlockedRefreshClient();
+  await assert.rejects(
+    () => client.ensureAuthenticated({ allowPasswordLogin: false }),
+    (error) => error?.protonCode === 2028 && error?.reauthRequired !== true,
+  );
+  assert.equal(client.auth.UID, "uid");
+  assert.equal(client.auth.AccessToken, "old-access");
+  assert.equal(client.auth.RefreshToken, "valuable-refresh");
+});
+
 test("API error preserves Proton human-verification details", async () => {
   const client = new ProtonClient(cfg, {});
   const originalFetch = globalThis.fetch;

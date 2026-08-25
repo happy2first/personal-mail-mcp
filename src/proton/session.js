@@ -1,8 +1,10 @@
 import { getAccount } from "../mail-config.js";
 import { ProtonClient } from "./client-v2.js";
 import { decryptJson, encryptJson, hasSessionEncryption } from "./session-crypto.js";
+import { suffix, validateImportedSession } from "./session-import.js";
 
 const SESSION_KEY = "proton:session:v2";
+const SESSION_META_KEY = "proton:sessionMeta:v1";
 const COOKIE_KEY = "proton:cookies:v1";
 const EVENT_CURSOR_KEY = "proton:eventCursor:v1";
 const RISK_KEY = "proton:risk:v2";
@@ -27,8 +29,8 @@ function riskBlockError(risk) {
     ? undefined
     : Math.max(1, Math.ceil((blockedUntil - now()) / 1000));
   const error = new Error(manual
-    ? "Proton 2028 后本地保护已进入人工恢复状态；后台任务不会继续密码登录。该状态是 Worker 本地策略，不代表 Proton 服务器给出的等待时间"
-    : `Proton 2028 后本地保护熔断中：后台任务不会自动重试密码登录；本地剩余保护时间约 ${localCooldownSeconds} 秒（不是 Proton 服务器 Retry-After）`);
+    ? "Proton 2028 后本地密码登录保护已进入人工恢复状态；不会继续密码 reauthorize。该状态不影响已导入 Session 的正常使用，也不代表 Proton 服务器给出的等待时间"
+    : `Proton 2028 后本地密码登录保护中：不会自动重试密码 reauthorize；本地剩余保护时间约 ${localCooldownSeconds} 秒（不是 Proton 服务器 Retry-After）`);
   error.protonCode = 2028;
   error.localCooldownSeconds = localCooldownSeconds;
   error.localPolicy = true;
@@ -63,6 +65,7 @@ function publicError(error, env, account, verifyState) {
     ...(error?.twoFactorRequired ? { twoFactorRequired: true } : {}),
     ...(error?.reauthRequired ? { reauthRequired: true } : {}),
     ...(error?.mailboxPasswordRequired ? { mailboxPasswordRequired: true } : {}),
+    ...(error?.sessionAccountMismatch ? { sessionAccountMismatch: true } : {}),
     ...(error?.humanVerification ? {
       humanVerificationRequired: true,
       humanVerificationMethods: error.humanVerification.methods || [],
@@ -147,8 +150,33 @@ export class ProtonSession {
     await this.writeEncrypted(COOKIE_KEY, account, client.getCookieState());
   }
 
-  async clearPersistedSession(client) {
+  async readSessionMeta() {
+    return (await this.state.storage.get(SESSION_META_KEY)) || null;
+  }
+
+  async writeSessionMeta(client, patch = {}) {
+    const previous = (await this.readSessionMeta()) || {};
+    const next = {
+      ...previous,
+      ...patch,
+      uidSuffix: suffix(client.auth?.UID),
+      userIdSuffix: suffix(client.auth?.UserID),
+      expiresAt: client.auth?.ExpiresAt || null,
+      hasAccessToken: Boolean(client.auth?.AccessToken),
+      hasRefreshToken: Boolean(client.auth?.RefreshToken),
+      updatedAt: now(),
+    };
+    await this.state.storage.put(SESSION_META_KEY, next);
+    return next;
+  }
+
+  async clearPersistedSession(client, { clearCookies = true } = {}) {
     await this.state.storage.delete(SESSION_KEY);
+    await this.state.storage.delete(SESSION_META_KEY);
+    if (clearCookies) {
+      await this.state.storage.delete(COOKIE_KEY);
+      client.setCookieState([]);
+    }
     client.clearSession();
   }
 
@@ -227,18 +255,31 @@ export class ProtonSession {
   async authStatus(client) {
     const risk = await this.readRisk();
     const authState = await this.readAuthState();
+    const meta = await this.readSessionMeta();
     const hv = await this.readEncrypted(HUMAN_VERIFY_KEY, client.cfg.id).catch(() => null);
+    const hasSession = Boolean(client.auth?.UID && client.auth?.RefreshToken);
     return {
       account: client.cfg.id,
       provider: "proton",
       sessionPersistenceConfigured: hasSessionEncryption(this.env),
-      hasSession: Boolean(client.auth?.UID && client.auth?.RefreshToken),
+      hasSession,
       expiresAt: client.auth?.ExpiresAt || null,
+      session: hasSession ? {
+        source: meta?.source || "existing",
+        importedAt: meta?.importedAt || null,
+        authenticatedAt: meta?.authenticatedAt || null,
+        lastValidatedAt: meta?.lastValidatedAt || null,
+        refreshedDuringValidation: Boolean(meta?.refreshedDuringValidation),
+        uidSuffix: suffix(client.auth?.UID),
+        userIdSuffix: suffix(client.auth?.UserID),
+        hasAccessToken: Boolean(client.auth?.AccessToken),
+        hasRefreshToken: Boolean(client.auth?.RefreshToken),
+      } : null,
       twoFactorPending: Boolean(authState.twoFactorPending),
       reauthRequired: Boolean(authState.reauthRequired),
       lastAuthAttempt: authState.lastAuthAttempt || null,
       transport: { cookieCount: client.getCookieState().length },
-      risk: risk ? { ...risk, policy: "local" } : null,
+      risk: risk ? { ...risk, policy: "local", scope: "password_reauthorize_only" } : null,
       humanVerification: hv ? {
         pending: Boolean(hv.challengeToken && !hv.completedToken),
         methods: hv.methods || [],
@@ -256,7 +297,7 @@ export class ProtonSession {
       return client.auth;
     }
     if (!allowPasswordLogin) {
-      const error = new Error("Proton 没有可恢复的持久 session，需要人工重新授权");
+      const error = new Error("Proton 没有可恢复的持久 session，需要人工重新授权或从 /proton/import 导入 Session");
       error.reauthRequired = true;
       throw error;
     }
@@ -274,8 +315,7 @@ export class ProtonSession {
     }
   }
 
-  async runClientAction(client, fn, { allowPasswordLogin = false, allowRiskBypass = false } = {}) {
-    await this.assertRiskCircuitClosed({ allowManual: allowRiskBypass });
+  async runClientAction(client, fn, { allowPasswordLogin = false } = {}) {
     await this.hydrate(client);
     try {
       await this.initializeOrRestore(client, { allowPasswordLogin });
@@ -288,7 +328,6 @@ export class ProtonSession {
         await this.clearPersistedSession(client);
         await this.patchAuthState({ reauthRequired: true, twoFactorPending: false });
       }
-      await this.rememberRiskBlock(error);
       throw error;
     }
   }
@@ -317,11 +356,12 @@ export class ProtonSession {
     if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
     let client;
     let account = "";
+    let action = "";
     let verifyState = null;
     try {
       const body = await request.json();
       account = String(body?.account || "").trim();
-      const action = String(body?.action || "").trim();
+      action = String(body?.action || "").trim();
       const payload = body?.payload || {};
       if (!account) throw new Error("缺少 Proton account");
       client = this.getClient(account);
@@ -333,10 +373,43 @@ export class ProtonSession {
       } else if (action === "resetRisk") {
         await this.state.storage.delete(RISK_KEY);
         data = { success: true, account, riskReset: true };
+      } else if (action === "importSession") {
+        if (!hasSessionEncryption(this.env)) throw new Error("未配置 PROTON_SESSION_KEY，禁止导入 Session");
+        const validated = await validateImportedSession(client.cfg, this.env, payload.session);
+        client.setAuth(validated.auth);
+        if (validated.cookies?.length) client.setCookieState(validated.cookies);
+        await this.persistClient(client);
+        await this.state.storage.delete(HUMAN_VERIFY_KEY);
+        await this.patchAuthState({ reauthRequired: false, twoFactorPending: false });
+        await this.writeSessionMeta(client, {
+          source: "manual_import",
+          importedAt: now(),
+          lastValidatedAt: now(),
+          refreshedDuringValidation: Boolean(validated.safe.refreshedDuringValidation),
+        });
+        data = { success: true, imported: true, ...validated.safe };
+      } else if (action === "validateSession") {
+        if (!client.auth?.UID || !client.auth?.RefreshToken) throw new Error("当前账号没有可校验的持久 Session");
+        const validated = await validateImportedSession(client.cfg, this.env, client.auth);
+        client.setAuth(validated.auth);
+        if (validated.cookies?.length) client.setCookieState(validated.cookies);
+        await this.persistClient(client);
+        await this.writeSessionMeta(client, {
+          lastValidatedAt: now(),
+          refreshedDuringValidation: Boolean(validated.safe.refreshedDuringValidation),
+        });
+        data = { success: true, validated: true, ...validated.safe };
+      } else if (action === "clearSession") {
+        await this.clearPersistedSession(client);
+        await this.state.storage.delete(HUMAN_VERIFY_KEY);
+        await this.patchAuthState({ reauthRequired: false, twoFactorPending: false });
+        data = { success: true, account, sessionCleared: true };
       } else if (action === "reauthorize") {
+        await this.assertRiskCircuitClosed();
         const attemptId = crypto.randomUUID();
         const startedAt = now();
         await this.state.storage.delete(SESSION_KEY);
+        await this.state.storage.delete(SESSION_META_KEY);
         client.clearSession();
         await this.patchAuthState({
           reauthRequired: false,
@@ -355,6 +428,7 @@ export class ProtonSession {
         try {
           await this.initializeOrRestore(client, { allowPasswordLogin: true });
           await this.state.storage.delete(RISK_KEY);
+          await this.writeSessionMeta(client, { source: "password", authenticatedAt: now() });
           await this.updateAuthAttempt(attemptId, {
             status: "succeeded",
             stage: "authenticated",
@@ -400,6 +474,7 @@ export class ProtonSession {
         if (!client.auth?.UID) throw twoFactorError();
         data = await client.submitTwoFactor(code);
         await this.persistClient(client);
+        await this.writeSessionMeta(client, { source: "password", authenticatedAt: now() });
         const authState = await this.patchAuthState({ reauthRequired: false, twoFactorPending: false });
         await this.updateAuthAttempt(authState.lastAuthAttempt?.attemptId, {
           status: "succeeded",
@@ -453,7 +528,7 @@ export class ProtonSession {
       return Response.json({ ok: true, data });
     } catch (error) {
       if (client) {
-        await this.rememberRiskBlock(error).catch(() => {});
+        if (action === "reauthorize") await this.rememberRiskBlock(error).catch(() => {});
         verifyState = await this.rememberHumanVerification(error, client).catch(() => null);
       }
       console.error("ProtonSession:", error?.message || String(error));

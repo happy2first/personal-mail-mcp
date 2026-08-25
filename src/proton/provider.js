@@ -54,7 +54,7 @@ export async function protonCall(env, cfgOrAccount, action, payload = {}) {
     for (const key of [
       "protonCode", "serverRetryAfterSeconds", "localCooldownSeconds", "localPolicy",
       "requestPath", "requestMethod", "circuitOpen", "manualResetRequired",
-      "twoFactorRequired", "reauthRequired", "mailboxPasswordRequired",
+      "twoFactorRequired", "reauthRequired", "mailboxPasswordRequired", "sessionAccountMismatch",
       "humanVerificationRequired", "humanVerificationMethods", "verificationUrl", "verificationState",
     ]) {
       if (body?.[key] !== undefined) error[key] = body[key];
@@ -85,3 +85,6 @@ export const protonAuthStatus = (env, cfg) => protonCall(env, cfg, "authStatus")
 export const protonReauthorize = (env, cfg) => protonCall(env, cfg, "reauthorize");
 export const protonSubmit2FA = (env, cfg, code) => protonCall(env, cfg, "submit2fa", { code });
 export const protonResetRisk = (env, cfg) => protonCall(env, cfg, "resetRisk");
+export const protonImportSession = (env, cfg, session) => protonCall(env, cfg, "importSession", { session });
+export const protonValidateSession = (env, cfg) => protonCall(env, cfg, "validateSession");
+export const protonClearSession = (env, cfg) => protonCall(env, cfg, "clearSession");

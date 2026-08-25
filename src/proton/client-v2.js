@@ -265,7 +265,12 @@ export class ProtonClient extends LegacyProtonClient {
           this.auth = normalizedAuth({ ...previous, ...refreshed, UID: refreshed.UID || previous.UID, RefreshToken: refreshed.RefreshToken || previous.RefreshToken }, previous);
           return this.auth;
         } catch (error) {
-          if ([400, 401, 422].includes(Number(error?.status))) { this.clearSession(); error.reauthRequired = true; }
+          const terminalRefreshFailure = Number(error?.protonCode) !== 2028
+            && [400, 401, 422].includes(Number(error?.status));
+          if (terminalRefreshFailure) {
+            this.clearSession();
+            error.reauthRequired = true;
+          }
           throw error;
         }
       })().finally(() => { this.refreshPromise = null; });
