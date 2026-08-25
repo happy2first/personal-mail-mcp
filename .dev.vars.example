@@ -46,7 +46,15 @@ PROTON_SESSION_KEY=replace-with-random-session-encryption-secret
 # Use the public origin of this Worker (custom domain recommended), no trailing slash.
 PROTON_VERIFY_BASE_URL=https://mail.mcp.example.com
 
+# Optional Proton authentication flow.
+# `core` (default) follows the current Proton WebClients SRP endpoints:
+#   /core/v4/auth/info -> /core/v4/auth -> /core/v4/auth/2fa
+# `legacy` keeps the Bridge/go-proton-api endpoint family:
+#   /auth/v4/info -> /auth/v4 -> /auth/v4/2fa
+# The Worker NEVER auto-falls back from one flow to the other after an auth error.
+# PROTON_AUTH_FLOW=core
+
 # Optional Proton compatibility overrides; normally leave unset.
-# The default app version is macos-bridge@3.24.1. AppVersion spoofing is NOT relied upon for risk control.
+# AppVersion spoofing is NOT relied upon for risk control.
 # PROTON_APP_VERSION=macos-bridge@3.24.1
 # PROTON_API_BASE=https://mail.proton.me/api

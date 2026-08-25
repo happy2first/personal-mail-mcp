@@ -97,6 +97,23 @@ export class ProtonClient extends LegacyProtonClient {
     this.cookieState = [];
     this.cookiePersistence = null;
     this.authStageCallback = null;
+    const configuredFlow = String(env.PROTON_AUTH_FLOW || "core").trim().toLowerCase();
+    this.authFlow = configuredFlow === "legacy" ? "legacy" : "core";
+  }
+
+  authPaths() {
+    if (this.authFlow === "legacy") {
+      return {
+        info: "/auth/v4/info",
+        submit: "/auth/v4",
+        twoFactor: "/auth/v4/2fa",
+      };
+    }
+    return {
+      info: "/core/v4/auth/info",
+      submit: "/core/v4/auth",
+      twoFactor: "/core/v4/auth/2fa",
+    };
   }
 
   setAuth(auth) { this.auth = auth ? normalizedAuth(auth) : null; }
@@ -168,14 +185,24 @@ export class ProtonClient extends LegacyProtonClient {
 
   async login({ twoFactorCode } = {}) {
     const username = this.cfg.email;
+    const paths = this.authPaths();
     await this.noteAuthStage("auth_info_request");
-    const info = await this.raw("/auth/v4/info", { method: "POST", body: { Username: username } });
+    const info = await this.raw(paths.info, {
+      method: "POST",
+      body: this.authFlow === "core" ? { Username: username, Intent: "Proton" } : { Username: username },
+    });
     await this.noteAuthStage("srp_compute");
     const proof = await getSrp(info, { username, password: this.cfg.credential });
     await this.noteAuthStage("auth_submit");
-    const auth = await this.raw("/auth/v4", {
+    const auth = await this.raw(paths.submit, {
       method: "POST",
-      body: { Username: username, ClientProof: proof.clientProof, ClientEphemeral: proof.clientEphemeral, SRPSession: info.SRPSession },
+      body: {
+        Username: username,
+        ClientProof: proof.clientProof,
+        ClientEphemeral: proof.clientEphemeral,
+        SRPSession: info.SRPSession,
+        ...(this.authFlow === "core" ? { PersistentCookies: 0 } : {}),
+      },
     });
     await this.noteAuthStage("server_proof_verify");
     if (!b64Equal(auth.ServerProof, proof.expectedServerProof)) throw new Error("Proton SRP server proof校验失败");
@@ -194,7 +221,11 @@ export class ProtonClient extends LegacyProtonClient {
   async submitTwoFactor(code) {
     if (!this.auth?.AccessToken) throw new Error("没有待完成 2FA 的 Proton 登录会话");
     if (!/^\d{6,8}$/.test(String(code || "").trim())) throw new Error("TOTP 验证码格式无效");
-    const payload = await this.raw("/auth/v4/2fa", { method: "POST", auth: true, body: { TwoFactorCode: String(code).trim() } });
+    const payload = await this.raw(this.authPaths().twoFactor, {
+      method: "POST",
+      auth: true,
+      body: { TwoFactorCode: String(code).trim() },
+    });
     if (payload?.Scope) this.auth.Scope = payload.Scope;
     this.auth.TwoFactorComplete = true;
     return this.auth;
