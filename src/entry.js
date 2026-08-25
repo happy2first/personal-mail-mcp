@@ -16,6 +16,7 @@ import {
   protonSubmit2FA,
   protonTransfer,
 } from "./proton/provider.js";
+import { handleProtonImport } from "./proton/import-page.js";
 import { handleProtonVerification } from "./proton/verify.js";
 export { ProtonSession } from "./proton/session.js";
 
@@ -94,7 +95,7 @@ function rpc(id, result) {
 function protonAuthTool() {
   return {
     name: "mail_proton_auth",
-    description: "[Proton] 查看认证状态、人工重新授权、提交 TOTP 2FA 或重置 2028 风控。定时任务不会自动执行密码重新登录。",
+    description: "[Proton] 查看认证状态、人工重新授权、提交 TOTP 2FA 或重置 2028 风控。定时任务不会自动执行密码重新登录；Session 也可通过受 Access 保护的 /proton/import 管理。",
     inputSchema: {
       type: "object",
       properties: {
@@ -220,12 +221,25 @@ const INTERCEPTED = new Set([
 
 export default {
   async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    if (url.pathname === "/proton/import" || url.pathname.startsWith("/proton/import/api/")) {
+      try {
+        const actor = await verifyAccess(request, env);
+        const response = await handleProtonImport(request, env, actor);
+        if (response) return response;
+      } catch (error) {
+        return Response.json({ error: "access_denied", message: error instanceof Error ? error.message : String(error) }, {
+          status: 401,
+          headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" },
+        });
+      }
+    }
+
     const verify = await handleProtonVerification(request, env);
     if (verify) return verify;
 
-    const url = new URL(request.url);
     if (url.pathname === "/") {
-      return Response.json({ ok: true, service: "personal-mail-mcp", version: "1.3.0", protonLifecycle: "v2" });
+      return Response.json({ ok: true, service: "personal-mail-mcp", version: "1.4.0", protonLifecycle: "v3-session-import" });
     }
     if (url.pathname !== "/mcp" || request.method !== "POST") return legacyWorker.fetch(request, env, ctx);
 
