@@ -14,7 +14,8 @@ test("Proton 2028 persistence is idempotent for the same error object", async ()
   assert.match(text, /error\.riskRemembered = true;/);
 });
 
-test("outer Proton action errors are passed through the persistent risk recorder", async () => {
+test("persistent 2028 risk recorder is scoped to explicit password reauthorize", async () => {
   const text = await source();
-  assert.match(text, /await this\.rememberRiskBlock\(error\)\.catch\(\(\) => \{\}\);/);
+  assert.match(text, /if \(action === "reauthorize"\) await this\.rememberRiskBlock\(error\)\.catch\(\(\) => \{\}\);/);
+  assert.match(text, /scope: "password_reauthorize_only"/);
 });
