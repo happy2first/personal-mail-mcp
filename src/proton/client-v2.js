@@ -135,6 +135,13 @@ export class ProtonClient extends LegacyProtonClient {
     }
     return headers;
   }
+  authHeaders() {
+    const headers = this.baseHeaders();
+    if (!this.auth?.UID) return headers;
+    headers["x-pm-uid"] = this.auth.UID;
+    if (!this.auth.cookies && this.auth.AccessToken) headers.authorization = `Bearer ${this.auth.AccessToken}`;
+    return headers;
+  }
 
   async captureResponseCookies(response, requestUrl) {
     const setCookies = getSetCookieHeaders(response?.headers);
@@ -229,6 +236,7 @@ export class ProtonClient extends LegacyProtonClient {
   }
 
   async ensureAuthenticated({ allowPasswordLogin = true } = {}) {
+    if (this.auth?.UID && this.auth?.cookies) return this.auth;
     if (this.auth?.AccessToken) {
       const expiresAt = Number(this.auth.ExpiresAt || 0);
       if (!expiresAt || expiresAt - Date.now() > PROACTIVE_REFRESH_MS) return this.auth;
@@ -243,13 +251,32 @@ export class ProtonClient extends LegacyProtonClient {
   }
 
   async refreshAuthenticated() {
-    if (!this.auth?.UID || !this.auth?.RefreshToken) {
-      const error = new Error("Proton Session 缺少 UID/RefreshToken，需要重新授权"); error.reauthRequired = true; throw error;
+    if (!this.auth?.UID) {
+      const error = new Error("Proton Session 缺少 UID，需要重新授权"); error.reauthRequired = true; throw error;
     }
     if (!this.refreshPromise) {
       const previous = { ...this.auth };
       this.refreshPromise = (async () => {
         try {
+          if (previous.cookies) {
+            const refreshed = await this.raw("/auth/refresh", {
+              method: "POST",
+              auth: true,
+            });
+            this.auth = normalizedAuth({
+              ...previous,
+              ...refreshed,
+              UID: refreshed.UID || previous.UID,
+              cookies: true,
+              AccessToken: "",
+            }, previous);
+            return this.auth;
+          }
+          if (!previous.RefreshToken) {
+            const error = new Error("Proton Session 缺少 RefreshToken，需要重新授权");
+            error.reauthRequired = true;
+            throw error;
+          }
           const refreshed = await this.raw("/auth/refresh", {
             method: "POST",
             auth: true,
