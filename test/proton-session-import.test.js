@@ -11,7 +11,7 @@ const clientUrl = new URL("../src/proton/client-v2.js", import.meta.url);
 
 const read = (url) => readFile(url, "utf8");
 
-test("manual Session import requires UID and RefreshToken and verifies account ownership", async () => {
+test("manual Session import requires UID and verifies account ownership", async () => {
   const text = await read(importUrl);
   assert.match(text, /Session 缺少 UID/);
   assert.match(text, /Session 缺少 RefreshToken/);
@@ -31,6 +31,15 @@ test("browser REFRESH cookie can bootstrap a Session without an AccessToken", ()
   assert.equal(session.UID, "uid-demo");
   assert.equal(session.RefreshToken, "refresh-demo");
   assert.equal(session.AccessToken, undefined);
+});
+
+test("browser Cookie request header bootstraps cookie-auth from AUTH-UID", () => {
+  const session = normalizeImportedSession("Cookie: AUTH-uid-demo=secret-auth; Session-Id=session-id; st=token");
+  assert.equal(session.UID, "uid-demo");
+  assert.equal(session.cookies, true);
+  assert.equal(session.AccessToken, undefined);
+  assert.ok(Array.isArray(session.CookieState));
+  assert.equal(session.CookieState.find((x) => x.name === "AUTH-uid-demo")?.value, "secret-auth");
 });
 
 test("REFRESH cookie name UID must match its encoded UID", () => {
@@ -73,6 +82,17 @@ test("token refresh matches the current Proton WebClients request shape", async 
   assert.match(text, /PROTON_REFRESH_REDIRECT_URI = "https:\/\/protonmail\.com"/);
 });
 
+test("cookie auth uses x-pm-uid without Bearer and refreshes with an empty POST body", async () => {
+  const text = await read(clientUrl);
+  assert.match(text, /if \(!this\.auth\.cookies && this\.auth\.AccessToken\) headers\.authorization/);
+  assert.match(text, /if \(this\.auth\?\.UID && this\.auth\?\.cookies\) return this\.auth/);
+  const start = text.indexOf("async refreshAuthenticated()");
+  const end = text.indexOf("async ensureKeys()", start);
+  const refresh = text.slice(start, end);
+  assert.match(refresh, /if \(previous\.cookies\)/);
+  assert.match(refresh, /this\.raw\("\/auth\/refresh", \{\s*method: "POST",\s*auth: true,\s*\}\)/s);
+});
+
 test("a transient Proton 2028 during refresh does not discard the imported Session", async () => {
   const text = await read(clientUrl);
   assert.match(text, /terminalRefreshFailure = Number\(error\?\.protonCode\) !== 2028/);
@@ -80,7 +100,7 @@ test("a transient Proton 2028 during refresh does not discard the imported Sessi
   assert.match(text, /if \(terminalRefreshFailure\) \{\s*this\.clearSession\(\);\s*error\.reauthRequired = true;/s);
 });
 
-test("management page is Access-protected, CSRF-protected and accepts browser REFRESH cookies without exposing token values", async () => {
+test("management page is Access-protected, CSRF-protected and never exposes token values", async () => {
   const page = await read(pageUrl);
   const entry = await read(entryUrl);
   assert.match(entry, /url\.pathname === "\/proton\/import"/);
@@ -89,7 +109,6 @@ test("management page is Access-protected, CSRF-protected and accepts browser RE
   assert.match(page, /x-csrf-token/);
   assert.match(page, /cache-control": "no-store/);
   assert.match(page, /已保存（不回显）/);
-  assert.match(page, /REFRESH-\* Cookie/);
   assert.match(page, /session:input/);
   assert.doesNotMatch(page, /localStorage\.(setItem|getItem)/);
 });
