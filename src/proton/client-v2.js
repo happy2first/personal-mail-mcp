@@ -6,7 +6,7 @@ import { computeKeyPassword, getSrp } from "./srp.js";
 import { cookieHeaderForUrl, getSetCookieHeaders, mergeSetCookieHeaders, normalizeCookieState } from "./cookies.js";
 import { forward, reply, saveDraft, sendMail } from "./write.js";
 
-const PROTON_REFRESH_REDIRECT_URI = "https://protonmail.ch";
+const PROTON_REFRESH_REDIRECT_URI = "https://protonmail.com";
 const PROACTIVE_REFRESH_MS = 2 * 60 * 1000;
 const decoder = new TextDecoder();
 const list = (v) => Array.isArray(v) ? v : [];
@@ -27,9 +27,6 @@ function concatBytes(...parts) {
   let offset = 0;
   for (const x of arrays) { out.set(x, offset); offset += x.length; }
   return out;
-}
-function randomState() {
-  const bytes = new Uint8Array(32); crypto.getRandomValues(bytes); return Buffer.from(bytes).toString("base64url");
 }
 function normalizedAuth(input, previous = {}) {
   const auth = { ...previous, ...input };
@@ -253,12 +250,14 @@ export class ProtonClient extends LegacyProtonClient {
       const previous = { ...this.auth };
       this.refreshPromise = (async () => {
         try {
-          const refreshed = await this.raw("/auth/v4/refresh", {
+          const refreshed = await this.raw("/auth/refresh", {
             method: "POST",
+            auth: true,
             body: {
-              UID: previous.UID, RefreshToken: previous.RefreshToken,
-              ResponseType: "token", GrantType: "refresh_token",
-              RedirectURI: PROTON_REFRESH_REDIRECT_URI, State: randomState(), AccessToken: previous.AccessToken || undefined,
+              ResponseType: "token",
+              GrantType: "refresh_token",
+              RefreshToken: previous.RefreshToken,
+              RedirectURI: PROTON_REFRESH_REDIRECT_URI,
             },
           });
           if (!refreshed.AccessToken) throw new Error("Proton refresh 成功响应缺少 AccessToken");
