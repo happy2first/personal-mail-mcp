@@ -1,4 +1,5 @@
 import "./mail-query.js";
+import "./key-material.js";
 
 function requireBinding(env) {
   if (!env.PROTON_SESSIONS) {
@@ -52,7 +53,10 @@ export async function protonCall(env, cfgOrAccount, action, payload = {}) {
     throw new Error(`Proton DO 返回不可解析响应（HTTP ${response.status}）`);
   }
   if (!response.ok || !body?.ok) {
-    const error = new Error(body?.error || `Proton DO 调用失败（HTTP ${response.status}）`);
+    const pathSuffix = body?.requestPath
+      ? ` [${String(body?.requestMethod || "GET").toUpperCase()} ${String(body.requestPath)}]`
+      : "";
+    const error = new Error(`${body?.error || `Proton DO 调用失败（HTTP ${response.status}）`}${pathSuffix}`);
     for (const key of [
       "protonCode", "serverRetryAfterSeconds", "localCooldownSeconds", "localPolicy",
       "requestPath", "requestMethod", "circuitOpen", "manualResetRequired",
