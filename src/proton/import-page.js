@@ -132,9 +132,9 @@ function pageHtml(csrf, nonce, actor) {
     <div id="status" class="grid"><div class="muted">正在加载…</div></div>
   </div>
   <div class="card">
-    <label for="session">粘贴 Proton 登录 Session JSON</label>
-    <textarea id="session" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder='包含 UID、AccessToken、RefreshToken、ExpiresIn 等字段的 Proton 登录响应 JSON'></textarea>
-    <div class="notice">提交前会先在内存中校验 Token，并通过 Proton 地址列表核对是否属于所选账号。校验失败时不会覆盖原有 Session；AccessToken 已过期时，允许使用 RefreshToken 尝试一次刷新。</div>
+    <label for="session">粘贴 Proton Session JSON 或浏览器 REFRESH-* Cookie</label>
+    <textarea id="session" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder='可粘贴：① 包含 UID、AccessToken、RefreshToken 的 Session JSON；② REFRESH-<UID>=<value>；③ 仅 REFRESH Cookie 的 value'></textarea>
+    <div class="notice">如果粘贴浏览器 REFRESH-* Cookie，Worker 只解析其中的 UID/RefreshToken，然后从 Cloudflare 端执行一次标准 Token refresh 获取 AccessToken，再通过 Proton 地址列表核对是否属于所选账号。校验失败时不会覆盖原有 Session。</div>
     <div class="actions"><button id="import" class="primary">校验并更新 Session</button><button id="clearText">清空输入</button></div>
   </div>
   <div class="card">
@@ -155,7 +155,7 @@ async function call(path,{method='GET',body}={}){const headers={'accept':'applic
 async function loadAccounts(){const data=await call('${API}/accounts');$('account').innerHTML=data.accounts.map(a=>'<option value="'+a.id+'">'+a.label+' · '+a.id+' · '+a.email+'</option>').join('');if(data.accounts.length)await loadStatus();else $('status').innerHTML='<div class="bad">没有已配置的 Proton 账号</div>'}
 async function loadStatus(){const id=$('account').value;if(!id)return;const data=await call('${API}/status?account='+encodeURIComponent(id));renderStatus(data.status)}
 async function act(fn){if(busy)return;setBusy(true);try{const data=await fn();$('result').textContent=JSON.stringify(data,null,2);await loadStatus()}catch(e){$('result').textContent=JSON.stringify(e.data||{error:e.message},null,2)}finally{setBusy(false)}}
-$('account').addEventListener('change',()=>act(loadStatus));$('refresh').onclick=()=>act(loadStatus);$('test').onclick=()=>act(()=>call('${API}/validate',{method:'POST',body:{account:$('account').value}}));$('import').onclick=()=>act(async()=>{const text=$('session').value.trim();if(!text)throw new Error('请先粘贴 Session JSON');let session;try{session=JSON.parse(text)}catch{throw new Error('Session JSON 格式无效')}const data=await call('${API}/import',{method:'POST',body:{account:$('account').value,session}});$('session').value='';return data});$('clearText').onclick=()=>{$('session').value='';$('session').focus()};$('clear').onclick=()=>{if(confirm('确认清除所选账号在 Worker 中保存的 Proton Session？此操作不会删除 Proton 账号本身。'))act(()=>call('${API}/clear',{method:'POST',body:{account:$('account').value}}))};$('resetRisk').onclick=()=>{if(confirm('只清除 Worker 本地 2028 密码登录保护锁？这不会解除 Proton 服务端限制。'))act(()=>call('${API}/reset-risk',{method:'POST',body:{account:$('account').value}}))};loadAccounts().catch(e=>{$('result').textContent=e.message});
+$('account').addEventListener('change',()=>act(loadStatus));$('refresh').onclick=()=>act(loadStatus);$('test').onclick=()=>act(()=>call('${API}/validate',{method:'POST',body:{account:$('account').value}}));$('import').onclick=()=>act(async()=>{const input=$('session').value.trim();if(!input)throw new Error('请先粘贴 Session JSON 或 REFRESH-* Cookie');const data=await call('${API}/import',{method:'POST',body:{account:$('account').value,session:input}});$('session').value='';return data});$('clearText').onclick=()=>{$('session').value='';$('session').focus()};$('clear').onclick=()=>{if(confirm('确认清除所选账号在 Worker 中保存的 Proton Session？此操作不会删除 Proton 账号本身。'))act(()=>call('${API}/clear',{method:'POST',body:{account:$('account').value}}))};$('resetRisk').onclick=()=>{if(confirm('只清除 Worker 本地 2028 密码登录保护锁？这不会解除 Proton 服务端限制。'))act(()=>call('${API}/reset-risk',{method:'POST',body:{account:$('account').value}}))};loadAccounts().catch(e=>{$('result').textContent=e.message});
 </script>
 </body></html>`;
 }
@@ -197,7 +197,7 @@ export async function handleProtonImport(request, env, actor = {}) {
     const cfg = account(env, body.account);
 
     if (url.pathname === `${API}/import`) {
-      if (!body.session || typeof body.session !== "object") throw new Error("缺少 Session JSON 对象");
+      if (!body.session || !["string", "object"].includes(typeof body.session)) throw new Error("缺少 Session JSON 或 REFRESH-* Cookie");
       return json(await protonImportSession(env, cfg, body.session));
     }
     if (url.pathname === `${API}/validate`) return json(await protonValidateSession(env, cfg));
