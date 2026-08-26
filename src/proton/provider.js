@@ -1,3 +1,5 @@
+import "./mail-query.js";
+
 function requireBinding(env) {
   if (!env.PROTON_SESSIONS) {
     throw new Error("缺少 Cloudflare Durable Object 绑定：PROTON_SESSIONS");
