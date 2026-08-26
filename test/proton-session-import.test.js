@@ -54,6 +54,25 @@ test("Session import is atomic and local 2028 risk only gates password reauthori
   assert.doesNotMatch(text.slice(runStart, pollStart), /assertRiskCircuitClosed/);
 });
 
+test("token refresh matches the current Proton WebClients request shape", async () => {
+  const text = await read(clientUrl);
+  const start = text.indexOf("async refreshAuthenticated()");
+  const end = text.indexOf("async ensureKeys()", start);
+  assert.ok(start >= 0 && end > start);
+  const refresh = text.slice(start, end);
+  assert.match(refresh, /this\.raw\("\/auth\/refresh"/);
+  assert.match(refresh, /auth: true/);
+  assert.match(refresh, /ResponseType: "token"/);
+  assert.match(refresh, /GrantType: "refresh_token"/);
+  assert.match(refresh, /RefreshToken: previous\.RefreshToken/);
+  assert.match(refresh, /RedirectURI: PROTON_REFRESH_REDIRECT_URI/);
+  assert.doesNotMatch(refresh, /\/auth\/v4\/refresh/);
+  assert.doesNotMatch(refresh, /UID: previous\.UID/);
+  assert.doesNotMatch(refresh, /State:/);
+  assert.doesNotMatch(refresh, /AccessToken: previous\.AccessToken/);
+  assert.match(text, /PROTON_REFRESH_REDIRECT_URI = "https:\/\/protonmail\.com"/);
+});
+
 test("a transient Proton 2028 during refresh does not discard the imported Session", async () => {
   const text = await read(clientUrl);
   assert.match(text, /terminalRefreshFailure = Number\(error\?\.protonCode\) !== 2028/);
