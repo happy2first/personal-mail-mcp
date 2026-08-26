@@ -5,6 +5,8 @@ import { normalizeKeySalts } from "../src/proton/key-material.js";
 
 const providerUrl = new URL("../src/proton/provider.js", import.meta.url);
 const keyMaterialUrl = new URL("../src/proton/key-material.js", import.meta.url);
+const keyMaterialSessionUrl = new URL("../src/proton/key-material-session.js", import.meta.url);
+const verifyUrl = new URL("../src/proton/verify.js", import.meta.url);
 
 const read = (url) => readFile(url, "utf8");
 
@@ -28,18 +30,21 @@ test("rejects arbitrary JSON as key material", () => {
 
 test("cookie-session key material path caches imported salts and explains 9101", async () => {
   const provider = await read(providerUrl);
-  const source = await read(keyMaterialUrl);
+  const clientSource = await read(keyMaterialUrl);
+  const sessionSource = await read(keyMaterialSessionUrl);
+  const verifySource = await read(verifyUrl);
   assert.match(provider, /import "\.\/key-material\.js"/);
-  assert.match(source, /this\.auth\?\.KeySalts/);
-  assert.match(source, /\/core\/v4\/keys\/salts/);
-  assert.match(source, /protonCode\) === 9101/);
-  assert.match(source, /keySaltsRequired = true/);
-  assert.match(source, /importMode: "key_salts_json"/);
-  assert.match(source, /client\.setAuth\(\{ \.\.\.client\.auth, KeySalts: salts \}\)/);
+  assert.match(verifySource, /import "\.\/key-material-session\.js"/);
+  assert.match(clientSource, /this\.auth\?\.KeySalts/);
+  assert.match(clientSource, /\/core\/v4\/keys\/salts/);
+  assert.match(clientSource, /protonCode\) === 9101/);
+  assert.match(clientSource, /keySaltsRequired = true/);
+  assert.match(sessionSource, /importMode: "key_salts_json"/);
+  assert.match(sessionSource, /client\.setAuth\(\{ \.\.\.client\.auth, KeySalts: salts \}\)/);
 });
 
 test("cookie session status does not pretend to expose a RefreshToken", async () => {
-  const source = await read(keyMaterialUrl);
+  const source = await read(keyMaterialSessionUrl);
   assert.match(source, /status\.session\.cookieAuth = cookieAuth/);
   assert.match(source, /status\.session\.hasRefreshToken = !cookieAuth/);
   assert.match(source, /status\.session\.keySaltCount = keySaltCount/);
