@@ -48,15 +48,17 @@ class RefreshSingleFlightClient extends ProtonClient {
     this.refreshCalls = 0;
     this.loginCalls = 0;
     this.refreshBody = null;
+    this.refreshAuth = null;
   }
   async login() {
     this.loginCalls += 1;
     throw new Error("password login must not be used during a 401 refresh");
   }
   async raw(path, options = {}) {
-    if (path === "/auth/v4/refresh") {
+    if (path === "/auth/refresh") {
       this.refreshCalls += 1;
       this.refreshBody = options.body;
+      this.refreshAuth = options.auth;
       await wait(10);
       return { UID: "uid", AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600 };
     }
@@ -80,12 +82,14 @@ test("concurrent 401 responses share one refresh and do not password-login", asy
   assert.equal(client.loginCalls, 0);
   assert.equal(client.auth.AccessToken, "new-access");
   assert.equal(client.auth.RefreshToken, "new-refresh");
-  assert.equal(client.refreshBody.UID, "uid");
+  assert.equal(client.refreshAuth, true);
   assert.equal(client.refreshBody.RefreshToken, "old-refresh");
   assert.equal(client.refreshBody.GrantType, "refresh_token");
   assert.equal(client.refreshBody.ResponseType, "token");
-  assert.equal(client.refreshBody.RedirectURI, "https://protonmail.ch");
-  assert.ok(client.refreshBody.State);
+  assert.equal(client.refreshBody.RedirectURI, "https://protonmail.com");
+  assert.equal(client.refreshBody.UID, undefined);
+  assert.equal(client.refreshBody.State, undefined);
+  assert.equal(client.refreshBody.AccessToken, undefined);
   assert.deepEqual(rows.map((x) => x.value), ["ok", "ok", "ok", "ok"]);
 });
 
@@ -120,7 +124,7 @@ class InvalidRefreshClient extends ProtonClient {
       error.status = 401;
       throw error;
     }
-    if (path === "/auth/v4/refresh") {
+    if (path === "/auth/refresh") {
       const error = new Error("invalid refresh token");
       error.status = 422;
       throw error;
@@ -144,7 +148,7 @@ class RiskBlockedRefreshClient extends ProtonClient {
     this.auth = { UID: "uid", AccessToken: "old-access", RefreshToken: "valuable-refresh", ExpiresAt: Date.now() + 30000 };
   }
   async raw(path) {
-    if (path !== "/auth/v4/refresh") throw new Error(`unexpected path ${path}`);
+    if (path !== "/auth/refresh") throw new Error(`unexpected path ${path}`);
     const error = new Error("temporarily limited");
     error.status = 422;
     error.protonCode = 2028;
