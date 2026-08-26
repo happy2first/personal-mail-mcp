@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { normalizeImportedSession } from "../src/proton/session-import.js";
 
 const sessionUrl = new URL("../src/proton/session.js", import.meta.url);
 const importUrl = new URL("../src/proton/session-import.js", import.meta.url);
@@ -10,14 +11,34 @@ const clientUrl = new URL("../src/proton/client-v2.js", import.meta.url);
 
 const read = (url) => readFile(url, "utf8");
 
-test("manual Session import requires UID, access and refresh tokens and verifies account ownership", async () => {
+test("manual Session import requires UID and RefreshToken and verifies account ownership", async () => {
   const text = await read(importUrl);
   assert.match(text, /Session 缺少 UID/);
-  assert.match(text, /Session 缺少 AccessToken/);
   assert.match(text, /Session 缺少 RefreshToken/);
   assert.match(text, /\/core\/v4\/addresses/);
   assert.match(text, /sessionAccountMismatch = true/);
   assert.match(text, /refreshAuthenticated\(\)/);
+});
+
+test("browser REFRESH cookie can bootstrap a Session without an AccessToken", () => {
+  const cookieValue = encodeURIComponent(JSON.stringify({
+    ResponseType: "token",
+    GrantType: "refresh_token",
+    UID: "uid-demo",
+    RefreshToken: "refresh-demo",
+  }));
+  const session = normalizeImportedSession(`REFRESH-uid-demo=${cookieValue}`);
+  assert.equal(session.UID, "uid-demo");
+  assert.equal(session.RefreshToken, "refresh-demo");
+  assert.equal(session.AccessToken, undefined);
+});
+
+test("REFRESH cookie name UID must match its encoded UID", () => {
+  const cookieValue = encodeURIComponent(JSON.stringify({ UID: "uid-a", RefreshToken: "refresh-demo" }));
+  assert.throws(
+    () => normalizeImportedSession(`REFRESH-uid-b=${cookieValue}`),
+    /UID 与 Cookie 内容不一致/,
+  );
 });
 
 test("Session import is atomic and local 2028 risk only gates password reauthorize", async () => {
@@ -40,7 +61,7 @@ test("a transient Proton 2028 during refresh does not discard the imported Sessi
   assert.match(text, /if \(terminalRefreshFailure\) \{\s*this\.clearSession\(\);\s*error\.reauthRequired = true;/s);
 });
 
-test("management page is Access-protected, CSRF-protected and never exposes stored token values", async () => {
+test("management page is Access-protected, CSRF-protected and accepts browser REFRESH cookies without exposing token values", async () => {
   const page = await read(pageUrl);
   const entry = await read(entryUrl);
   assert.match(entry, /url\.pathname === "\/proton\/import"/);
@@ -49,5 +70,7 @@ test("management page is Access-protected, CSRF-protected and never exposes stor
   assert.match(page, /x-csrf-token/);
   assert.match(page, /cache-control": "no-store/);
   assert.match(page, /已保存（不回显）/);
+  assert.match(page, /REFRESH-\* Cookie/);
+  assert.match(page, /session:input/);
   assert.doesNotMatch(page, /localStorage\.(setItem|getItem)/);
 });
