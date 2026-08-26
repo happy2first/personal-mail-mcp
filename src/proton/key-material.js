@@ -54,7 +54,7 @@ async function decryptToken(key, userKeys) {
     const checked = await verify({
       message: await createMessage({ binary: token }),
       signature,
-      verificationKeys: userKeys.map((item) => item.toPublic()),
+      verificationKeys: userKeys,
     });
     if (!checked.signatures?.length) throw new Error("Proton address key token 缺少签名");
     await checked.signatures[0].verified;
