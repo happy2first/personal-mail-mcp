@@ -1,3 +1,4 @@
+import "./key-material-session.js";
 import { protonCall } from "./provider.js";
 
 const DEFAULT_API = "https://mail.proton.me/api";
