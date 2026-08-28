@@ -1,7 +1,8 @@
 import { ProtonClient } from "./client-v2.js";
 import { normalizeImportedSession } from "./session-import.js";
 
-export const PROTON_REFRESH_COOKIE_PATH = "/api/auth/refresh";
+export const PROTON_REFRESH_REQUEST_PATH = "/api/auth/refresh";
+export const PROTON_AUTH_COOKIE_PATH = "/api/";
 
 const MAX_COOKIE_BYTES = 8192;
 const MAX_COOKIES = 64;
@@ -30,27 +31,39 @@ function cookieKey(cookie) {
   return `${cookie.name}\n${cookie.domain}\n${cookie.path}`;
 }
 
-function normalizeRefreshCookieObject(raw, baseUrl) {
+function pathCoversRequest(cookiePath, requestPath = PROTON_REFRESH_REQUEST_PATH) {
+  const path = String(cookiePath || "/");
+  const target = String(requestPath || "/");
+  if (path === target) return true;
+  if (!target.startsWith(path)) return false;
+  return path.endsWith("/") || target.charAt(path.length) === "/";
+}
+
+export function isRefreshCapableCookie(cookie) {
+  return /^AUTH-/i.test(String(cookie?.name || "")) && pathCoversRequest(cookie?.path, PROTON_REFRESH_REQUEST_PATH);
+}
+
+function normalizeExtraCookieObject(raw, baseUrl) {
   const host = new URL(baseUrl).hostname.toLowerCase();
   const name = text(raw?.name ?? raw?.Name);
   const value = text(raw?.value ?? raw?.Value);
-  if (!name || !value) throw new Error("Refresh Cookie 必须包含 name 和 value");
-  if (value.length > MAX_COOKIE_BYTES) throw new Error(`Refresh Cookie ${name} 超过大小限制`);
+  if (!name || !value) throw new Error("Cookie 必须包含 name 和 value");
+  if (value.length > MAX_COOKIE_BYTES) throw new Error(`Cookie ${name} 超过大小限制`);
 
   const rawDomain = text(raw?.domain ?? raw?.Domain);
   const domain = (rawDomain || host).toLowerCase().replace(/^\./, "");
-  if (!domainAllowed(host, domain)) throw new Error(`Refresh Cookie ${name} 的 Domain 与 Proton API 主机不匹配`);
+  if (!domainAllowed(host, domain)) throw new Error(`Cookie ${name} 的 Domain 与 Proton API 主机不匹配`);
 
-  const path = text(raw?.path ?? raw?.Path) || PROTON_REFRESH_COOKIE_PATH;
-  if (path !== PROTON_REFRESH_COOKIE_PATH) {
-    throw new Error(`Refresh Cookie ${name} 的 Path 必须是 ${PROTON_REFRESH_COOKIE_PATH}`);
+  const path = text(raw?.path ?? raw?.Path) || PROTON_REFRESH_REQUEST_PATH;
+  if (!pathCoversRequest(path, PROTON_REFRESH_REQUEST_PATH)) {
+    throw new Error(`Cookie ${name} 的 Path=${path} 不会发送到 ${PROTON_REFRESH_REQUEST_PATH}`);
   }
 
   const explicitHostOnly = raw?.hostOnly ?? raw?.HostOnly;
   const hostOnly = explicitHostOnly === undefined
     ? domain === host && !rawDomain.startsWith(".")
     : Boolean(explicitHostOnly);
-  if (hostOnly && domain !== host) throw new Error(`Refresh Cookie ${name} 的 hostOnly 与 Domain 不一致`);
+  if (hostOnly && domain !== host) throw new Error(`Cookie ${name} 的 hostOnly 与 Domain 不一致`);
 
   return {
     name,
@@ -86,7 +99,7 @@ function parseSetCookieLine(line, baseUrl) {
       if (Number.isFinite(seconds)) candidate.expiresAt = seconds <= 0 ? 0 : Date.now() + seconds * 1000;
     }
   }
-  return normalizeRefreshCookieObject(candidate, baseUrl);
+  return normalizeExtraCookieObject(candidate, baseUrl);
 }
 
 function parseCookiePairs(raw, baseUrl) {
@@ -101,27 +114,28 @@ function parseCookiePairs(raw, baseUrl) {
     if (!name || ignored.has(name.toLowerCase())) continue;
     const value = part.slice(eq + 1).trim();
     if (!value) continue;
-    out.push(normalizeRefreshCookieObject({ name, value }, baseUrl));
+    out.push(normalizeExtraCookieObject({ name, value }, baseUrl));
     if (out.length >= MAX_COOKIES) break;
   }
   return out;
 }
 
-function parseRefreshValue(value, baseUrl) {
-  if (Array.isArray(value)) return value.flatMap((item) => parseRefreshValue(item, baseUrl));
+function parseExtraValue(value, baseUrl) {
+  if (value === undefined || value === null || value === "") return [];
+  if (Array.isArray(value)) return value.flatMap((item) => parseExtraValue(item, baseUrl));
   const obj = object(value);
   if (obj) {
     const nested = obj.refreshCookies ?? obj.cookies ?? obj.CookieState;
-    if (Array.isArray(nested)) return nested.flatMap((item) => parseRefreshValue(item, baseUrl));
-    return [normalizeRefreshCookieObject(obj, baseUrl)];
+    if (Array.isArray(nested)) return nested.flatMap((item) => parseExtraValue(item, baseUrl));
+    return [normalizeExtraCookieObject(obj, baseUrl)];
   }
-  if (typeof value !== "string") throw new Error("Refresh Cookie 输入格式无效");
+  if (typeof value !== "string") throw new Error("额外 Cookie 输入格式无效");
   const raw = value.trim();
   if (!raw) return [];
   if (raw.startsWith("{") || raw.startsWith("[")) {
-    try { return parseRefreshValue(JSON.parse(raw), baseUrl); }
+    try { return parseExtraValue(JSON.parse(raw), baseUrl); }
     catch (error) {
-      if (error instanceof SyntaxError) throw new Error("Refresh Cookie JSON 无效");
+      if (error instanceof SyntaxError) throw new Error("额外 Cookie JSON 无效");
       throw error;
     }
   }
@@ -141,15 +155,13 @@ function parseRefreshValue(value, baseUrl) {
 }
 
 export function normalizeRefreshCookieInput(value, baseUrl = "https://mail.proton.me/api") {
-  const parsed = parseRefreshValue(value, baseUrl);
+  const parsed = parseExtraValue(value, baseUrl);
   const byKey = new Map();
   for (const cookie of parsed) {
     if (cookie.expiresAt !== null && cookie.expiresAt <= Date.now()) continue;
     byKey.set(cookieKey(cookie), cookie);
   }
-  const result = [...byKey.values()].slice(-MAX_COOKIES);
-  if (!result.length) throw new Error(`没有识别到有效 Refresh Cookie；请从浏览器中选择 Path=${PROTON_REFRESH_COOKIE_PATH} 的 Cookie`);
-  return result;
+  return [...byKey.values()].slice(-MAX_COOKIES);
 }
 
 function normalizeSessionCookieInput(value, candidate) {
@@ -157,15 +169,18 @@ function normalizeSessionCookieInput(value, candidate) {
   if (!auth?.UID || !auth.cookies) throw new Error("普通 Session Cookie 必须包含 AUTH-<UID> Cookie");
   const host = new URL(candidate.baseUrl).hostname.toLowerCase();
   const raw = Array.isArray(auth.CookieState) ? auth.CookieState : [];
-  const cookies = raw.slice(0, MAX_COOKIES).map((item) => ({
-    name: text(item?.name),
-    value: text(item?.value),
-    domain: host,
-    hostOnly: true,
-    path: "/",
-    secure: true,
-    expiresAt: null,
-  })).filter((item) => item.name && item.value && item.value.length <= MAX_COOKIE_BYTES);
+  const cookies = raw.slice(0, MAX_COOKIES).map((item) => {
+    const name = text(item?.name);
+    return {
+      name,
+      value: text(item?.value),
+      domain: host,
+      hostOnly: true,
+      path: /^AUTH-/i.test(name) ? PROTON_AUTH_COOKIE_PATH : "/",
+      secure: true,
+      expiresAt: null,
+    };
+  }).filter((item) => item.name && item.value && item.value.length <= MAX_COOKIE_BYTES);
   if (!cookies.length) throw new Error("普通 Session Cookie 中没有可导入的 Cookie");
   return { auth, cookies };
 }
@@ -179,7 +194,7 @@ function mergeCookieState(...states) {
 }
 
 export function countRefreshCookies(state) {
-  return (Array.isArray(state) ? state : []).filter((cookie) => cookie?.path === PROTON_REFRESH_COOKIE_PATH).length;
+  return (Array.isArray(state) ? state : []).filter(isRefreshCapableCookie).length;
 }
 
 function addressesFromPayload(payload) {
@@ -200,12 +215,12 @@ async function validateAddressOwnership(candidate, expectedEmail) {
   return addresses.length;
 }
 
-export async function validateCookieBundle(cfg, env, { sessionCookie, refreshCookie }) {
+export async function validateCookieBundle(cfg, env, { sessionCookie, refreshCookie } = {}) {
   const candidate = new ProtonClient(cfg, env);
   const session = normalizeSessionCookieInput(sessionCookie, candidate);
-  const refreshCookies = normalizeRefreshCookieInput(refreshCookie, candidate.baseUrl);
+  const extraCookies = normalizeRefreshCookieInput(refreshCookie, candidate.baseUrl);
   candidate.setAuth(session.auth);
-  candidate.setCookieState(mergeCookieState(session.cookies, refreshCookies));
+  candidate.setCookieState(mergeCookieState(session.cookies, extraCookies));
 
   let refreshedDuringValidation = false;
   let addressCount;
@@ -220,7 +235,9 @@ export async function validateCookieBundle(cfg, env, { sessionCookie, refreshCoo
 
   const cookieState = candidate.getCookieState();
   const refreshCookieCount = countRefreshCookies(cookieState);
-  if (!refreshCookieCount) throw new Error(`Cookie Session 已校验，但没有保留下 ${PROTON_REFRESH_COOKIE_PATH} 的 Refresh Cookie`);
+  if (!refreshCookieCount) {
+    throw new Error(`Cookie Session 已校验，但没有 AUTH-* Cookie 可发送到 ${PROTON_REFRESH_REQUEST_PATH}`);
+  }
   const auth = {
     ...candidate.auth,
     cookies: true,
@@ -231,15 +248,16 @@ export async function validateCookieBundle(cfg, env, { sessionCookie, refreshCoo
     cookies: cookieState,
     safe: {
       account: cfg.id,
-      importMode: "browser_cookie_bundle",
+      importMode: extraCookies.length ? "browser_cookie_bundle_with_extra" : "browser_cookie_header",
       cookieAuth: true,
       emailMatched: true,
       addressCount,
       refreshedDuringValidation,
       cookieCount: cookieState.length,
-      normalCookieCount: cookieState.length - refreshCookieCount,
+      normalCookieCount: Math.max(0, cookieState.length - refreshCookieCount),
       refreshCookieCount,
       refreshCapable: true,
+      extraCookieCount: extraCookies.length,
     },
   };
 }
