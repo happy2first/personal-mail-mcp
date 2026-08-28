@@ -24,6 +24,7 @@ async function persistRefreshMeta(session, client) {
     lastRefreshSentCookieNames: Array.isArray(info.sentCookieNames) ? info.sentCookieNames.slice(0, 32) : [],
     lastRefreshSentCookieCount: Number(info.sentCookieCount || 0),
     lastRefreshContentTypeOmitted: Boolean(info.contentTypeOmitted),
+    lastRefreshSessionIdCookiesRemoved: Number(info.sessionIdCookiesRemoved || 0),
   });
 }
 
@@ -83,6 +84,7 @@ ProtonSession.prototype.authStatus = async function authStatusWithCookieRefresh(
     sentCookieNames: Array.isArray(meta?.lastRefreshSentCookieNames) ? meta.lastRefreshSentCookieNames : [],
     sentCookieCount: Number(meta?.lastRefreshSentCookieCount || 0),
     contentTypeOmitted: Boolean(meta?.lastRefreshContentTypeOmitted),
+    sessionIdCookiesRemoved: Number(meta?.lastRefreshSessionIdCookiesRemoved || 0),
   };
   return status;
 };
@@ -102,6 +104,15 @@ async function validateCurrentAddress(client) {
     throw error;
   }
   return addresses.length;
+}
+
+function refreshDiagnostics(client) {
+  return {
+    sentCookieNames: client.lastRefreshInfo?.sentCookieNames || [],
+    sentCookieCount: Number(client.lastRefreshInfo?.sentCookieCount || 0),
+    contentTypeOmitted: Boolean(client.lastRefreshInfo?.contentTypeOmitted),
+    sessionIdCookiesRemoved: Number(client.lastRefreshInfo?.sessionIdCookiesRemoved || 0),
+  };
 }
 
 const originalFetch = ProtonSession.prototype.fetch;
@@ -184,11 +195,7 @@ ProtonSession.prototype.fetch = async function fetchWithCookieRefreshActions(req
             addressCount,
             cookiesUpdated: before !== after,
             refreshCookieCount: countRefreshCookies(client.getCookieState()),
-            diagnostics: {
-              sentCookieNames: client.lastRefreshInfo?.sentCookieNames || [],
-              sentCookieCount: Number(client.lastRefreshInfo?.sentCookieCount || 0),
-              contentTypeOmitted: Boolean(client.lastRefreshInfo?.contentTypeOmitted),
-            },
+            diagnostics: refreshDiagnostics(client),
           },
         });
       } catch (error) {
@@ -204,11 +211,7 @@ ProtonSession.prototype.fetch = async function fetchWithCookieRefreshActions(req
           refreshFailed: true,
           reauthRequired: Boolean(error?.reauthRequired),
           sessionPreserved: Boolean(error?.preserveSession),
-          diagnostics: {
-            sentCookieNames: client.lastRefreshInfo?.sentCookieNames || [],
-            sentCookieCount: Number(client.lastRefreshInfo?.sentCookieCount || 0),
-            contentTypeOmitted: Boolean(client.lastRefreshInfo?.contentTypeOmitted),
-          },
+          diagnostics: refreshDiagnostics(client),
         }, { status: 400 });
       }
     }

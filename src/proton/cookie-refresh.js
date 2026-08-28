@@ -29,6 +29,23 @@ function dedupeRefreshCookies(state) {
   return reversed.reverse();
 }
 
+function dedupeSessionIdCookies(state) {
+  const rows = Array.isArray(state) ? state : [];
+  const matches = rows
+    .map((cookie, index) => ({ cookie, index }))
+    .filter(({ cookie }) => String(cookie?.name || "").toLowerCase() === "session-id");
+  if (matches.length <= 1) return rows;
+
+  const preferred = matches.find(({ cookie }) => (
+    String(cookie?.domain || "").toLowerCase().replace(/^\./, "") === "proton.me"
+    && cookie?.hostOnly === false
+  )) || matches[matches.length - 1];
+
+  return rows.filter((cookie, index) => (
+    String(cookie?.name || "").toLowerCase() !== "session-id" || index === preferred.index
+  ));
+}
+
 function cookieNames(header) {
   return String(header || "")
     .split(";")
@@ -54,8 +71,14 @@ ProtonClient.prototype.refreshAuthenticated = async function refreshAuthenticate
   const cookieAuth = Boolean(this.auth?.cookies);
   const previousAuth = this.auth ? { ...this.auth } : null;
   const previousCookies = this.getCookieState();
+  const refreshCookies = cookieAuth ? dedupeSessionIdCookies(previousCookies) : previousCookies;
+  const sessionIdCookiesRemoved = Math.max(0, previousCookies.length - refreshCookies.length);
+  if (cookieAuth && fingerprintCookies(previousCookies) !== fingerprintCookies(refreshCookies)) {
+    this.setCookieState(refreshCookies);
+    if (this.cookiePersistence) await this.cookiePersistence(this.getCookieState()).catch(() => {});
+  }
   const refreshUrl = `${this.baseUrl}/auth/refresh`;
-  const refreshCookieHeader = cookieAuth ? cookieHeaderForUrl(previousCookies, refreshUrl) : "";
+  const refreshCookieHeader = cookieAuth ? cookieHeaderForUrl(refreshCookies, refreshUrl) : "";
   const sentCookieNames = cookieNames(refreshCookieHeader);
   const startedAt = Date.now();
   const previousNoContentTypeFlag = this.__protonCookieRefreshNoContentType;
@@ -63,7 +86,7 @@ ProtonClient.prototype.refreshAuthenticated = async function refreshAuthenticate
     if (cookieAuth) this.__protonCookieRefreshNoContentType = true;
     const result = await originalRefreshAuthenticated.call(this);
     const rawNextCookies = this.getCookieState();
-    const nextCookies = cookieAuth ? dedupeRefreshCookies(rawNextCookies) : rawNextCookies;
+    const nextCookies = cookieAuth ? dedupeSessionIdCookies(dedupeRefreshCookies(rawNextCookies)) : rawNextCookies;
     if (fingerprintCookies(rawNextCookies) !== fingerprintCookies(nextCookies)) {
       this.setCookieState(nextCookies);
       if (this.cookiePersistence) await this.cookiePersistence(this.getCookieState());
@@ -77,12 +100,13 @@ ProtonClient.prototype.refreshAuthenticated = async function refreshAuthenticate
       sentCookieNames,
       sentCookieCount: sentCookieNames.length,
       contentTypeOmitted: cookieAuth,
+      sessionIdCookiesRemoved,
     };
     return result;
   } catch (error) {
     if (cookieAuth && previousAuth?.UID && error?.reauthRequired) {
       this.setAuth(previousAuth);
-      this.setCookieState(previousCookies);
+      this.setCookieState(refreshCookies);
       if (this.cookiePersistence) await this.cookiePersistence(this.getCookieState()).catch(() => {});
       error.preserveSession = true;
       error.refreshFailed = true;
@@ -98,6 +122,7 @@ ProtonClient.prototype.refreshAuthenticated = async function refreshAuthenticate
       sentCookieNames,
       sentCookieCount: sentCookieNames.length,
       contentTypeOmitted: cookieAuth,
+      sessionIdCookiesRemoved,
     };
     throw error;
   } finally {
@@ -105,4 +130,4 @@ ProtonClient.prototype.refreshAuthenticated = async function refreshAuthenticate
   }
 };
 
-export { dedupeRefreshCookies };
+export { dedupeRefreshCookies, dedupeSessionIdCookies };
