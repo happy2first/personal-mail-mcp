@@ -158,9 +158,9 @@ ProtonSession.prototype.fetch = async function fetchWithCookieRefreshActions(req
       const client = this.getClient(account);
       await this.hydrate(client);
       try {
-        if (!client.auth?.UID || !client.auth?.cookies) throw new Error("当前账号没有 Cookie Session，请先导入普通 Session Cookie");
+        if (!client.auth?.UID || !client.auth?.cookies) throw new Error("当前账号没有 Cookie Session，请先导入浏览器 Session Cookie");
         const refreshCookieCount = countRefreshCookies(client.getCookieState());
-        if (!refreshCookieCount) throw new Error("当前 Cookie Session 没有 /api/auth/refresh Refresh Cookie，无法测试自动续期");
+        if (!refreshCookieCount) throw new Error("当前 Cookie Session 没有可发送到 /api/auth/refresh 的 AUTH-* Cookie，无法测试自动续期");
         const before = JSON.stringify(client.getCookieState());
         await client.refreshAuthenticated();
         const addressCount = await validateCurrentAddress(client);
