@@ -1,3 +1,4 @@
+import "./cookie-refresh-session.js";
 import { ProtonSession } from "./session.js";
 import { normalizeKeySalts } from "./key-material.js";
 
