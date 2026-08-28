@@ -14,6 +14,16 @@ function protonCallTimeoutMs(env, action) {
   return action === "reauthorize" ? 20000 : 25000;
 }
 
+function safeDiagnosticsSuffix(diagnostics) {
+  if (!diagnostics || typeof diagnostics !== "object") return "";
+  const names = Array.isArray(diagnostics.sentCookieNames)
+    ? diagnostics.sentCookieNames.map((value) => String(value)).filter(Boolean).slice(0, 32)
+    : [];
+  const count = Number(diagnostics.sentCookieCount || names.length || 0);
+  const contentTypeOmitted = diagnostics.contentTypeOmitted === true;
+  return ` [refresh diagnostics: cookieNames=${names.join(",") || "none"}; cookieCount=${count}; contentTypeOmitted=${contentTypeOmitted}]`;
+}
+
 export function protonSessionStub(env, accountId) {
   const namespace = requireBinding(env);
   const id = namespace.idFromName(String(accountId).toLowerCase());
@@ -56,12 +66,14 @@ export async function protonCall(env, cfgOrAccount, action, payload = {}) {
     const pathSuffix = body?.requestPath
       ? ` [${String(body?.requestMethod || "GET").toUpperCase()} ${String(body.requestPath)}]`
       : "";
-    const error = new Error(`${body?.error || `Proton DO 调用失败（HTTP ${response.status}）`}${pathSuffix}`);
+    const diagnosticsSuffix = safeDiagnosticsSuffix(body?.diagnostics);
+    const error = new Error(`${body?.error || `Proton DO 调用失败（HTTP ${response.status}）`}${pathSuffix}${diagnosticsSuffix}`);
     for (const key of [
       "protonCode", "serverRetryAfterSeconds", "localCooldownSeconds", "localPolicy",
       "requestPath", "requestMethod", "circuitOpen", "manualResetRequired",
       "twoFactorRequired", "reauthRequired", "mailboxPasswordRequired", "sessionAccountMismatch",
       "humanVerificationRequired", "humanVerificationMethods", "verificationUrl", "verificationState",
+      "refreshFailed", "sessionPreserved", "diagnostics",
     ]) {
       if (body?.[key] !== undefined) error[key] = body[key];
     }
