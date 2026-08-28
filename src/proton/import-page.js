@@ -2,10 +2,11 @@ import { getAccount, listAccountIds } from "../mail-config.js";
 import {
   isProtonAccount,
   protonAuthStatus,
+  protonCall,
   protonClearSession,
   protonImportSession,
   protonResetRisk,
-  protonValidateSession,
+  protonTestConnection,
 } from "./provider.js";
 
 const BASE = "/proton/import";
@@ -45,7 +46,7 @@ function protonAccounts(env) {
       if (!isProtonAccount(cfg)) continue;
       rows.push({ id: cfg.id, label: cfg.label, email: maskEmail(cfg.email) });
     } catch {
-      // Invalid non-Proton account configuration should not expose secrets here.
+      // Do not expose invalid account configuration details.
     }
   }
   return rows;
@@ -61,7 +62,7 @@ function safeError(error) {
   const out = { error: error instanceof Error ? error.message : String(error) };
   for (const key of [
     "protonCode", "serverRetryAfterSeconds", "localCooldownSeconds", "manualResetRequired",
-    "sessionAccountMismatch", "requestPath", "requestMethod", "reauthRequired",
+    "sessionAccountMismatch", "requestPath", "requestMethod", "reauthRequired", "refreshFailed",
   ]) if (error?.[key] !== undefined) out[key] = error[key];
   return out;
 }
@@ -116,46 +117,106 @@ function pageHtml(csrf, nonce, actor) {
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Proton Session 管理</title>
 <style nonce="${nonce}">
-:root{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:#172033;background:#f5f7fa}*{box-sizing:border-box}body{margin:0}.wrap{max-width:920px;margin:0 auto;padding:28px 18px 56px}.head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:20px}.head h1{font-size:26px;margin:0 0 8px}.muted{color:#667085;font-size:13px;line-height:1.55}.card{background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 1px 2px rgba(16,24,40,.04)}label{display:block;font-weight:600;font-size:14px;margin-bottom:8px}select,textarea{width:100%;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#172033;font:inherit}select{height:42px;padding:0 12px}textarea{min-height:220px;padding:12px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.item{border:1px solid #eaecf0;border-radius:8px;padding:12px}.item b{display:block;font-size:12px;color:#667085;margin-bottom:4px}.item span{font-size:14px;word-break:break-word}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}button{appearance:none;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#344054;padding:9px 14px;font-weight:600;cursor:pointer;min-height:40px}button.primary{background:#1677ff;border-color:#1677ff;color:#fff}button.danger{color:#b42318;border-color:#fda29b}button:disabled{opacity:.55;cursor:not-allowed}.notice{border-left:3px solid #1677ff;padding:10px 12px;background:#f0f6ff;border-radius:6px;font-size:13px;line-height:1.6;margin-top:12px}.result{white-space:pre-wrap;word-break:break-word;background:#101828;color:#f2f4f7;border-radius:8px;padding:12px;min-height:56px;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ok{color:#067647}.bad{color:#b42318}.pill{display:inline-block;border-radius:999px;padding:3px 8px;background:#f2f4f7;font-size:12px}.footer{margin-top:12px;color:#98a2b3;font-size:12px}@media(max-width:640px){.wrap{padding:18px 12px 40px}.head{display:block}.head h1{font-size:22px}.grid{grid-template-columns:1fr}.card{padding:16px}button{width:100%}}
+:root{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:#172033;background:#f5f7fa}*{box-sizing:border-box}body{margin:0}.wrap{max-width:960px;margin:0 auto;padding:28px 18px 56px}.head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:20px}.head h1{font-size:26px;margin:0 0 8px}.muted{color:#667085;font-size:13px;line-height:1.6}.card{background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 1px 2px rgba(16,24,40,.04)}label{display:block;font-weight:650;font-size:14px;margin-bottom:8px}select,textarea{width:100%;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#172033;font:inherit}select{height:42px;padding:0 12px}textarea{min-height:132px;padding:12px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.item{border:1px solid #eaecf0;border-radius:8px;padding:12px}.item b{display:block;font-size:12px;color:#667085;margin-bottom:4px}.item span{font-size:14px;word-break:break-word}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}button{appearance:none;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#344054;padding:9px 14px;font-weight:650;cursor:pointer;min-height:40px}button.primary{background:#1677ff;border-color:#1677ff;color:#fff}button.danger{color:#b42318;border-color:#fda29b}button:disabled{opacity:.55;cursor:not-allowed}.notice{border-left:3px solid #1677ff;padding:10px 12px;background:#f0f6ff;border-radius:6px;font-size:13px;line-height:1.65;margin-top:10px}.notice.warn{border-left-color:#f79009;background:#fffaeb}.result{white-space:pre-wrap;word-break:break-word;background:#101828;color:#f2f4f7;border-radius:8px;padding:12px;min-height:56px;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ok{color:#067647}.bad{color:#b42318}.warnText{color:#b54708}.pill{display:inline-block;border-radius:999px;padding:3px 8px;background:#f2f4f7;font-size:12px}.summary{font-size:17px;font-weight:700;margin-bottom:14px;padding:12px 14px;border-radius:8px;background:#f2f4f7}.summary.ok{background:#ecfdf3}.summary.warnText{background:#fffaeb}.summary.bad{background:#fef3f2}.step{display:inline-flex;width:25px;height:25px;align-items:center;justify-content:center;border-radius:50%;background:#1677ff;color:#fff;font-size:13px;margin-right:7px}.footer{margin-top:12px;color:#98a2b3;font-size:12px}details{border-top:1px solid #eaecf0;margin-top:18px;padding-top:14px}summary{cursor:pointer;font-weight:650;color:#475467}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f2f4f7;padding:1px 4px;border-radius:4px}@media(max-width:760px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:560px){.wrap{padding:18px 12px 40px}.head{display:block}.head h1{font-size:22px}.grid{grid-template-columns:1fr}.card{padding:16px}button{width:100%}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="head"><div><h1>Proton Session 管理</h1><div class="muted">由 Cloudflare Access 保护。Token 仅用于覆盖更新，页面不会完整回显、不会写入 localStorage，也不会返回到 ChatGPT。</div></div><div class="pill">${actorText}</div></div>
+  <div class="head"><div><h1>Proton Session 管理</h1><div class="muted">由 Cloudflare Access 保护。Cookie、Token 和 KeySalt 只用于加密持久化与校验；页面不会完整回显，也不会写入 localStorage。</div></div><div class="pill">${actorText}</div></div>
+
   <div class="card">
     <label for="account">Proton 账号</label>
     <select id="account"></select>
-    <div class="actions"><button id="refresh">刷新状态</button><button id="test">测试现有 Session</button></div>
+    <div class="actions"><button id="refreshStatus">刷新状态</button><button id="testSession">测试当前读取权限</button><button id="testRefresh">测试自动续期</button></div>
+    <div class="notice warn">“测试自动续期”会真实调用一次 <code>POST /auth/refresh</code>，用于立即确认 Refresh Cookie 是否可用，不必再等几天观察。</div>
   </div>
+
   <div class="card">
     <label>当前状态</label>
+    <div id="summary" class="summary">正在加载…</div>
     <div id="status" class="grid"><div class="muted">正在加载…</div></div>
   </div>
+
   <div class="card">
-    <label for="session">粘贴 Proton Session JSON 或浏览器 REFRESH-* Cookie</label>
-    <textarea id="session" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder='可粘贴：① 包含 UID、AccessToken、RefreshToken 的 Session JSON；② REFRESH-<UID>=<value>；③ 仅 REFRESH Cookie 的 value'></textarea>
-    <div class="notice">如果粘贴浏览器 REFRESH-* Cookie，Worker 只解析其中的 UID/RefreshToken，然后从 Cloudflare 端执行一次标准 Token refresh 获取 AccessToken，再通过 Proton 地址列表核对是否属于所选账号。校验失败时不会覆盖原有 Session。</div>
-    <div class="actions"><button id="import" class="primary">校验并更新 Session</button><button id="clearText">清空输入</button></div>
+    <label for="sessionCookie"><span class="step">1</span>普通 Session Cookie</label>
+    <textarea id="sessionCookie" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Cookie: AUTH-&lt;UID&gt;=...; Session-Id=...; ..."></textarea>
+    <div class="notice">在 Proton Mail 浏览器页面打开 DevTools → Network，选择一个正常成功的 Proton API 请求（例如 <code>/core/v4/addresses</code>），从 Request Headers 复制完整 <code>Cookie:</code> 请求头。它负责正常访问邮件 API。</div>
   </div>
+
+  <div class="card">
+    <label for="refreshCookie"><span class="step">2</span>自动续期 Cookie</label>
+    <textarea id="refreshCookie" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="NAME=VALUE&#10;或：Set-Cookie: NAME=VALUE; Path=/api/auth/refresh; Secure; ..."></textarea>
+    <div class="notice">在 DevTools → Application → Cookies 中找到 <code>Path=/api/auth/refresh</code> 的 Cookie。把该行的 Name 和 Value 组合成 <code>NAME=VALUE</code> 粘贴；如果有多条，每行一条。也支持完整 Set-Cookie 行或包含 name/value/path/domain 的 JSON。此框中的简写会自动按 <code>/api/auth/refresh</code> 保存，不再错误地当成 <code>/</code> Cookie。</div>
+    <div class="actions"><button id="importCookies" class="primary">校验并导入 Cookie Session</button><button id="clearCookies">清空两个 Cookie 输入框</button></div>
+  </div>
+
+  <div class="card">
+    <label for="keySalts"><span class="step">3</span>邮件解密材料 KeySalt（通常只需一次）</label>
+    <textarea id="keySalts" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder='粘贴 GET /core/v4/keys/salts 的 Response JSON，例如 {"Code":1000,"KeySalts":[...]}'></textarea>
+    <div class="notice">KeySalt 用于本地解锁 Proton 私钥，不是短期 Session 凭证。只要 Proton 用户密钥没有变化，一般无需随 Cookie Session 每次更新。若状态显示 KeySalt 已保存，可跳过此步。</div>
+    <div class="actions"><button id="importKeySalts">导入 KeySalt</button><button id="clearKeySalts">清空 KeySalt 输入框</button></div>
+
+    <details>
+      <summary>高级兼容：旧 Session JSON / REFRESH-* Cookie 导入</summary>
+      <div class="muted" style="margin:10px 0">仅用于兼容旧流程。长期运行建议使用上面的“普通 Cookie + 自动续期 Cookie”两框导入。</div>
+      <textarea id="legacySession" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Session JSON 或旧 REFRESH-* Cookie"></textarea>
+      <div class="actions"><button id="importLegacy">兼容导入</button><button id="clearLegacy">清空</button></div>
+    </details>
+  </div>
+
   <div class="card">
     <label>维护操作</label>
     <div class="actions"><button id="clear" class="danger">清除已保存 Session</button><button id="resetRisk" class="danger">清除本地 2028 密码登录锁</button></div>
-    <div class="muted" style="margin-top:10px">清除本地 2028 锁只影响 Worker 是否允许再次执行密码 reauthorize，不会解除 Proton 服务端风控；已导入 Session 的正常使用不受该本地锁影响。</div>
+    <div class="muted" style="margin-top:10px">本地 2028 锁只限制 Worker 密码 reauthorize，不影响已导入 Cookie Session 的正常使用。清除本地锁不会解除 Proton 服务端风控，通常不需要操作。</div>
   </div>
+
   <div class="card"><label>操作结果</label><div id="result" class="result">尚未执行操作。</div></div>
-  <div class="footer">安全策略：no-store · SameSite=Strict CSRF · Access JWT 二次校验 · Session AES-GCM 加密持久化</div>
+  <div class="footer">安全策略：no-store · SameSite=Strict CSRF · Access JWT 二次校验 · Session/Cookie/KeySalt AES-GCM 加密持久化</div>
 </div>
 <script nonce="${nonce}">
 const csrf=${JSON.stringify(csrf)};const $=id=>document.getElementById(id);let busy=false;
 function setBusy(v){busy=v;document.querySelectorAll('button').forEach(b=>b.disabled=v)}
 function fmtTime(v){if(!v)return '—';try{return new Date(Number(v)).toLocaleString()}catch{return String(v)}}
 function safe(v){return v===undefined||v===null||v===''?'—':String(v)}
-function renderStatus(s){const session=s.session||{};const risk=s.risk||{};const attempt=s.lastAuthAttempt||{};const rows=[['Session',s.hasSession?'已保存':'未保存'],['来源',session.source],['AccessToken',session.hasAccessToken?'已保存（不回显）':'未保存'],['RefreshToken',session.hasRefreshToken?'已保存（不回显）':'未保存'],['AccessToken 到期',fmtTime(s.expiresAt)],['最后导入',fmtTime(session.importedAt)],['最后校验',fmtTime(session.lastValidatedAt)],['UID 尾号',session.uidSuffix],['Cookie 数',s.transport?.cookieCount],['本地风险锁',risk.manualResetRequired?'人工锁定':risk.attempt?'第 '+risk.attempt+' 次记录':'无'],['风险锁范围',risk.scope||'—'],['最后授权阶段',attempt.stage||'—']];$('status').innerHTML=rows.map(([k,v])=>'<div class="item"><b>'+k+'</b><span>'+safe(v)+'</span></div>').join('')}
+function esc(v){return safe(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function yes(v){return v?'✅ 是':'❌ 否'}
+function renderStatus(s){
+  const session=s.session||{},risk=s.risk||{},attempt=s.lastAuthAttempt||{},refresh=s.refresh||{},keys=s.keyMaterial||{};
+  let summary='';let cls='summary ';
+  if(!s.hasSession){summary='❌ 未保存有效 Proton Session，需要重新从浏览器导入 Cookie';cls+='bad'}
+  else if(s.reauthRequired){summary='⚠️ Session 材料仍已保存，但当前认证需要恢复；不要使用 Worker 密码 reauthorize';cls+='warnText'}
+  else if(session.cookieAuth&&refresh.capable&&refresh.verified&&keys.imported){summary='✅ Cookie Session、自动续期和邮件解密均已验证';cls+='ok'}
+  else if(session.cookieAuth&&refresh.capable&&!refresh.verified){summary='⚠️ Refresh Cookie 已保存，但还没有成功执行过自动续期测试';cls+='warnText'}
+  else if(session.cookieAuth&&!refresh.capable){summary='⚠️ 当前 Cookie Session 可用，但缺少 /api/auth/refresh Cookie，不能长期自动续期';cls+='warnText'}
+  else{summary='⚠️ Session 已保存，请检查自动续期和 KeySalt 状态';cls+='warnText'}
+  $('summary').className=cls;$('summary').textContent=summary;
+  const rows=[
+    ['Session',s.hasSession?'已保存':'未保存'],['需要恢复',yes(s.reauthRequired)],['Cookie Auth',yes(session.cookieAuth)],
+    ['普通 Cookie 数',session.normalCookieCount??s.transport?.normalCookieCount],['Refresh Cookie 数',refresh.cookieCount??s.transport?.refreshCookieCount],['自动续期材料',yes(refresh.capable)],
+    ['自动续期已验证',yes(refresh.verified)],['最后续期结果',refresh.lastResult],['最后续期时间',fmtTime(refresh.lastAttemptAt)],
+    ['KeySalt 数',keys.keySaltCount],['邮件解密材料',yes(keys.imported)],['最后导入',fmtTime(session.importedAt)],
+    ['最后校验',fmtTime(session.lastValidatedAt)],['UID 尾号',session.uidSuffix],['总 Cookie 数',s.transport?.cookieCount],
+    ['本地 2028 锁',risk.manualResetRequired?'人工锁定':risk.attempt?'第 '+risk.attempt+' 次记录':'无'],['风险锁范围',risk.scope||'—'],['历史最后授权阶段',attempt.stage||'—']
+  ];
+  $('status').innerHTML=rows.map(([k,v])=>'<div class="item"><b>'+esc(k)+'</b><span>'+esc(v)+'</span></div>').join('');
+}
 async function call(path,{method='GET',body}={}){const headers={'accept':'application/json'};if(method!=='GET'){headers['content-type']='application/json';headers['x-csrf-token']=csrf}const r=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin',cache:'no-store'});let data;try{data=await r.json()}catch{data={error:'服务器返回不可解析响应'}}if(!r.ok)throw Object.assign(new Error(data.error||('HTTP '+r.status)),{data});return data}
-async function loadAccounts(){const data=await call('${API}/accounts');$('account').innerHTML=data.accounts.map(a=>'<option value="'+a.id+'">'+a.label+' · '+a.id+' · '+a.email+'</option>').join('');if(data.accounts.length)await loadStatus();else $('status').innerHTML='<div class="bad">没有已配置的 Proton 账号</div>'}
-async function loadStatus(){const id=$('account').value;if(!id)return;const data=await call('${API}/status?account='+encodeURIComponent(id));renderStatus(data.status)}
-async function act(fn){if(busy)return;setBusy(true);try{const data=await fn();$('result').textContent=JSON.stringify(data,null,2);await loadStatus()}catch(e){$('result').textContent=JSON.stringify(e.data||{error:e.message},null,2)}finally{setBusy(false)}}
-$('account').addEventListener('change',()=>act(loadStatus));$('refresh').onclick=()=>act(loadStatus);$('test').onclick=()=>act(()=>call('${API}/validate',{method:'POST',body:{account:$('account').value}}));$('import').onclick=()=>act(async()=>{const input=$('session').value.trim();if(!input)throw new Error('请先粘贴 Session JSON 或 REFRESH-* Cookie');const data=await call('${API}/import',{method:'POST',body:{account:$('account').value,session:input}});$('session').value='';return data});$('clearText').onclick=()=>{$('session').value='';$('session').focus()};$('clear').onclick=()=>{if(confirm('确认清除所选账号在 Worker 中保存的 Proton Session？此操作不会删除 Proton 账号本身。'))act(()=>call('${API}/clear',{method:'POST',body:{account:$('account').value}}))};$('resetRisk').onclick=()=>{if(confirm('只清除 Worker 本地 2028 密码登录保护锁？这不会解除 Proton 服务端限制。'))act(()=>call('${API}/reset-risk',{method:'POST',body:{account:$('account').value}}))};loadAccounts().catch(e=>{$('result').textContent=e.message});
+async function loadAccounts(){const data=await call('${API}/accounts');$('account').innerHTML=data.accounts.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.label)+' · '+esc(a.id)+' · '+esc(a.email)+'</option>').join('');if(data.accounts.length)await loadStatus();else $('status').innerHTML='<div class="bad">没有已配置的 Proton 账号</div>'}
+async function loadStatus(){const id=$('account').value;if(!id)return;const data=await call('${API}/status?account='+encodeURIComponent(id));renderStatus(data.status);return data}
+async function act(fn){if(busy)return;setBusy(true);try{const data=await fn();$('result').textContent=JSON.stringify(data,null,2);await loadStatus();return data}catch(e){$('result').textContent=JSON.stringify(e.data||{error:e.message},null,2)}finally{setBusy(false)}}
+$('account').addEventListener('change',()=>act(loadStatus));
+$('refreshStatus').onclick=()=>act(loadStatus);
+$('testSession').onclick=()=>act(()=>call('${API}/validate',{method:'POST',body:{account:$('account').value}}));
+$('testRefresh').onclick=()=>{if(confirm('将真实执行一次 Proton POST /auth/refresh，以验证自动续期并保存服务器返回的新 Cookie。继续？'))act(()=>call('${API}/test-refresh',{method:'POST',body:{account:$('account').value}}))};
+$('importCookies').onclick=()=>act(async()=>{const sessionCookie=$('sessionCookie').value.trim(),refreshCookie=$('refreshCookie').value.trim();if(!sessionCookie)throw new Error('请先粘贴普通 Session Cookie');if(!refreshCookie)throw new Error('请先粘贴 Path=/api/auth/refresh 的 Refresh Cookie');const data=await call('${API}/import-cookies',{method:'POST',body:{account:$('account').value,sessionCookie,refreshCookie}});$('sessionCookie').value='';$('refreshCookie').value='';return data});
+$('clearCookies').onclick=()=>{$('sessionCookie').value='';$('refreshCookie').value='';$('sessionCookie').focus()};
+$('importKeySalts').onclick=()=>act(async()=>{const input=$('keySalts').value.trim();if(!input)throw new Error('请先粘贴 keys/salts Response JSON');const data=await call('${API}/import',{method:'POST',body:{account:$('account').value,session:input}});$('keySalts').value='';return data});
+$('clearKeySalts').onclick=()=>{$('keySalts').value='';$('keySalts').focus()};
+$('importLegacy').onclick=()=>act(async()=>{const input=$('legacySession').value.trim();if(!input)throw new Error('请先粘贴旧 Session JSON 或 REFRESH-* Cookie');const data=await call('${API}/import',{method:'POST',body:{account:$('account').value,session:input}});$('legacySession').value='';return data});
+$('clearLegacy').onclick=()=>{$('legacySession').value='';$('legacySession').focus()};
+$('clear').onclick=()=>{if(confirm('确认清除所选账号在 Worker 中保存的 Proton Session、Cookie 和随 Session 保存的解密材料？'))act(()=>call('${API}/clear',{method:'POST',body:{account:$('account').value}}))};
+$('resetRisk').onclick=()=>{if(confirm('只清除 Worker 本地 2028 密码登录保护锁？这不会解除 Proton 服务端限制。'))act(()=>call('${API}/reset-risk',{method:'POST',body:{account:$('account').value}}))};
+loadAccounts().catch(e=>{$('result').textContent=e.message});
 </script>
 </body></html>`;
 }
@@ -196,11 +257,20 @@ export async function handleProtonImport(request, env, actor = {}) {
     const body = await readJson(request);
     const cfg = account(env, body.account);
 
+    if (url.pathname === `${API}/import-cookies`) {
+      if (typeof body.sessionCookie !== "string" || !body.sessionCookie.trim()) throw new Error("缺少普通 Session Cookie");
+      if (!["string", "object"].includes(typeof body.refreshCookie) || !body.refreshCookie) throw new Error("缺少 Refresh Cookie");
+      return json(await protonCall(env, cfg, "importCookieBundle", {
+        sessionCookie: body.sessionCookie,
+        refreshCookie: body.refreshCookie,
+      }));
+    }
+    if (url.pathname === `${API}/test-refresh`) return json(await protonCall(env, cfg, "testRefresh"));
     if (url.pathname === `${API}/import`) {
-      if (!body.session || !["string", "object"].includes(typeof body.session)) throw new Error("缺少 Session JSON 或 REFRESH-* Cookie");
+      if (!body.session || !["string", "object"].includes(typeof body.session)) throw new Error("缺少 Session / Cookie / KeySalt 输入");
       return json(await protonImportSession(env, cfg, body.session));
     }
-    if (url.pathname === `${API}/validate`) return json(await protonValidateSession(env, cfg));
+    if (url.pathname === `${API}/validate`) return json(await protonTestConnection(env, cfg));
     if (url.pathname === `${API}/clear`) return json(await protonClearSession(env, cfg));
     if (url.pathname === `${API}/reset-risk`) return json(await protonResetRisk(env, cfg));
     return json({ error: "Not Found" }, 404);
