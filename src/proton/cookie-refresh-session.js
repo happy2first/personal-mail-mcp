@@ -21,6 +21,9 @@ async function persistRefreshMeta(session, client) {
     lastRefreshProtonCode: info.protonCode || null,
     lastRefreshRequestPath: info.requestPath || "/auth/refresh",
     lastRefreshRequestMethod: info.requestMethod || "POST",
+    lastRefreshSentCookieNames: Array.isArray(info.sentCookieNames) ? info.sentCookieNames.slice(0, 32) : [],
+    lastRefreshSentCookieCount: Number(info.sentCookieCount || 0),
+    lastRefreshContentTypeOmitted: Boolean(info.contentTypeOmitted),
   });
 }
 
@@ -77,6 +80,9 @@ ProtonSession.prototype.authStatus = async function authStatusWithCookieRefresh(
     cookiesUpdated: Boolean(meta?.lastRefreshCookiesUpdated),
     protonCode: meta?.lastRefreshProtonCode || null,
     requestPath: meta?.lastRefreshRequestPath || null,
+    sentCookieNames: Array.isArray(meta?.lastRefreshSentCookieNames) ? meta.lastRefreshSentCookieNames : [],
+    sentCookieCount: Number(meta?.lastRefreshSentCookieCount || 0),
+    contentTypeOmitted: Boolean(meta?.lastRefreshContentTypeOmitted),
   };
   return status;
 };
@@ -178,6 +184,11 @@ ProtonSession.prototype.fetch = async function fetchWithCookieRefreshActions(req
             addressCount,
             cookiesUpdated: before !== after,
             refreshCookieCount: countRefreshCookies(client.getCookieState()),
+            diagnostics: {
+              sentCookieNames: client.lastRefreshInfo?.sentCookieNames || [],
+              sentCookieCount: Number(client.lastRefreshInfo?.sentCookieCount || 0),
+              contentTypeOmitted: Boolean(client.lastRefreshInfo?.contentTypeOmitted),
+            },
           },
         });
       } catch (error) {
@@ -193,6 +204,11 @@ ProtonSession.prototype.fetch = async function fetchWithCookieRefreshActions(req
           refreshFailed: true,
           reauthRequired: Boolean(error?.reauthRequired),
           sessionPreserved: Boolean(error?.preserveSession),
+          diagnostics: {
+            sentCookieNames: client.lastRefreshInfo?.sentCookieNames || [],
+            sentCookieCount: Number(client.lastRefreshInfo?.sentCookieCount || 0),
+            contentTypeOmitted: Boolean(client.lastRefreshInfo?.contentTypeOmitted),
+          },
         }, { status: 400 });
       }
     }

@@ -49,6 +49,16 @@ test("optional extra cookie accepts any path that covers refresh request", () =>
   assert.deepEqual(normalizeRefreshCookieInput("", "https://mail.proton.me/api"), []);
 });
 
+test("cookie refresh omits JSON content-type for the bodyless WebClients request", async () => {
+  const refresh = await read(refreshUrl);
+  assert.match(refresh, /originalBaseHeaders/);
+  assert.match(refresh, /__protonCookieRefreshNoContentType/);
+  assert.match(refresh, /delete headers\["content-type"\]/);
+  assert.match(refresh, /contentTypeOmitted: cookieAuth/);
+  assert.match(refresh, /cookieHeaderForUrl/);
+  assert.match(refresh, /sentCookieNames/);
+});
+
 test("cookie refresh failure preserves imported cookie session and diagnostics", async () => {
   const refresh = await read(refreshUrl);
   const session = await read(sessionUrl);
@@ -60,6 +70,8 @@ test("cookie refresh failure preserves imported cookie session and diagnostics",
   assert.match(session, /if \(error\?\.preserveSession\)/);
   assert.match(session, /patchAuthState\(\{ reauthRequired: true/);
   assert.match(session, /lastRefreshResult/);
+  assert.match(session, /lastRefreshSentCookieNames/);
+  assert.match(session, /contentTypeOmitted/);
 });
 
 test("management page makes extra refresh cookie optional and keeps explicit refresh test", async () => {
@@ -71,6 +83,7 @@ test("management page makes extra refresh cookie optional and keeps explicit ref
   assert.match(session, /action === "testRefresh"/);
   assert.match(session, /refreshSucceeded: true/);
   assert.match(session, /可发送到 \/api\/auth\/refresh 的 AUTH-\* Cookie/);
+  assert.match(session, /diagnostics:/);
   assert.match(page, /id="sessionCookie"/);
   assert.match(page, /可选：额外的专用刷新 Cookie/);
   assert.match(page, /refreshCookie:refreshCookie\|\|null/);
