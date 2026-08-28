@@ -100,7 +100,7 @@ test("a transient Proton 2028 during refresh does not discard the imported Sessi
   assert.match(text, /if \(terminalRefreshFailure\) \{\s*this\.clearSession\(\);\s*error\.reauthRequired = true;/s);
 });
 
-test("management page is Access-protected, CSRF-protected and never exposes token values", async () => {
+test("management page is Access-protected, CSRF-protected and separates normal and refresh cookies", async () => {
   const page = await read(pageUrl);
   const entry = await read(entryUrl);
   assert.match(entry, /url\.pathname === "\/proton\/import"/);
@@ -108,7 +108,10 @@ test("management page is Access-protected, CSRF-protected and never exposes toke
   assert.match(page, /SameSite=Strict/);
   assert.match(page, /x-csrf-token/);
   assert.match(page, /cache-control": "no-store/);
-  assert.match(page, /已保存（不回显）/);
-  assert.match(page, /session:input/);
+  assert.match(page, /id="sessionCookie"/);
+  assert.match(page, /id="refreshCookie"/);
+  assert.match(page, /\/api\/auth\/refresh/);
+  assert.match(page, /\/test-refresh/);
+  assert.match(page, /id="keySalts"/);
   assert.doesNotMatch(page, /localStorage\.(setItem|getItem)/);
 });
