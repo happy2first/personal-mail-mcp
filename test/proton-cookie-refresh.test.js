@@ -8,6 +8,7 @@ import {
   PROTON_AUTH_COOKIE_PATH,
   PROTON_REFRESH_REQUEST_PATH,
 } from "../src/proton/cookie-bundle.js";
+import { dedupeSessionIdCookies } from "../src/proton/cookie-refresh.js";
 
 const refreshUrl = new URL("../src/proton/cookie-refresh.js", import.meta.url);
 const sessionUrl = new URL("../src/proton/cookie-refresh-session.js", import.meta.url);
@@ -49,6 +50,18 @@ test("optional extra cookie accepts any path that covers refresh request", () =>
   assert.deepEqual(normalizeRefreshCookieInput("", "https://mail.proton.me/api"), []);
 });
 
+test("refresh keeps one Session-Id and prefers the Proton domain cookie", () => {
+  const rows = dedupeSessionIdCookies([
+    { name: "AUTH-demo", value: "auth", domain: "mail.proton.me", hostOnly: true, path: "/api/" },
+    { name: "Session-Id", value: "imported-old", domain: "mail.proton.me", hostOnly: true, path: "/" },
+    { name: "Tag", value: "default", domain: "mail.proton.me", hostOnly: true, path: "/" },
+    { name: "Session-Id", value: "server-new", domain: "proton.me", hostOnly: false, path: "/" },
+  ]);
+  assert.equal(rows.filter((x) => x.name === "Session-Id").length, 1);
+  assert.equal(rows.find((x) => x.name === "Session-Id")?.value, "server-new");
+  assert.equal(rows.find((x) => x.name === "Session-Id")?.domain, "proton.me");
+});
+
 test("cookie refresh omits JSON content-type for the bodyless WebClients request", async () => {
   const refresh = await read(refreshUrl);
   assert.match(refresh, /originalBaseHeaders/);
@@ -57,20 +70,23 @@ test("cookie refresh omits JSON content-type for the bodyless WebClients request
   assert.match(refresh, /contentTypeOmitted: cookieAuth/);
   assert.match(refresh, /cookieHeaderForUrl/);
   assert.match(refresh, /sentCookieNames/);
+  assert.match(refresh, /dedupeSessionIdCookies/);
 });
 
-test("cookie refresh failure preserves imported cookie session and diagnostics", async () => {
+test("cookie refresh failure preserves canonicalized cookie session and diagnostics", async () => {
   const refresh = await read(refreshUrl);
   const session = await read(sessionUrl);
   assert.match(refresh, /previousAuth/);
   assert.match(refresh, /this\.setAuth\(previousAuth\)/);
-  assert.match(refresh, /this\.setCookieState\(previousCookies\)/);
+  assert.match(refresh, /this\.setCookieState\(refreshCookies\)/);
+  assert.match(refresh, /sessionIdCookiesRemoved/);
   assert.match(refresh, /error\.preserveSession = true/);
   assert.match(refresh, /error\.refreshFailed = true/);
   assert.match(session, /if \(error\?\.preserveSession\)/);
   assert.match(session, /patchAuthState\(\{ reauthRequired: true/);
   assert.match(session, /lastRefreshResult/);
   assert.match(session, /lastRefreshSentCookieNames/);
+  assert.match(session, /lastRefreshSessionIdCookiesRemoved/);
   assert.match(session, /contentTypeOmitted/);
 });
 
@@ -83,7 +99,7 @@ test("management page makes extra refresh cookie optional and keeps explicit ref
   assert.match(session, /action === "testRefresh"/);
   assert.match(session, /refreshSucceeded: true/);
   assert.match(session, /可发送到 \/api\/auth\/refresh 的 AUTH-\* Cookie/);
-  assert.match(session, /diagnostics:/);
+  assert.match(session, /diagnostics: refreshDiagnostics/);
   assert.match(page, /id="sessionCookie"/);
   assert.match(page, /可选：额外的专用刷新 Cookie/);
   assert.match(page, /refreshCookie:refreshCookie\|\|null/);
