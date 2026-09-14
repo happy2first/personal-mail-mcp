@@ -16,4 +16,5 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run check
+      - run: node --experimental-test-module-mocks --test test/proton-extension.integration.js
       - run: npx wrangler deploy --dry-run --outdir dist

@@ -17,6 +17,7 @@ import {
   protonTransfer,
 } from "./proton/provider.js";
 import { handleProtonImport } from "./proton/import-page.js";
+import "./proton/extension-session.js";
 import { handleProtonVerification } from "./proton/verify.js";
 export { ProtonSession } from "./proton/session.js";
 

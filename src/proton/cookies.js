@@ -92,6 +92,10 @@ export function normalizeCookieState(state, nowMs = Date.now()) {
       hostOnly: raw?.hostOnly !== false,
       path: path.startsWith("/") ? path : "/",
       secure: Boolean(raw?.secure),
+      httpOnly: Boolean(raw?.httpOnly),
+      ...(raw?.sameSite ? { sameSite: raw.sameSite } : {}),
+      ...(typeof raw?.session === "boolean" ? { session: raw.session } : {}),
+      ...(raw?.expirationDate != null ? { expirationDate: raw.expirationDate } : {}),
       expiresAt: Number.isFinite(expiresAt) ? expiresAt : null,
     };
     byKey.set(keyOf(cookie), cookie);

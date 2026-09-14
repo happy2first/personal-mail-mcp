@@ -114,6 +114,7 @@ function pageHtml(csrf, nonce, actor) {
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="proton-extension-csrf" content="${csrf}">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Proton Session 管理</title>
 <style nonce="${nonce}">
@@ -256,6 +257,16 @@ export async function handleProtonImport(request, env, actor = {}) {
     verifyCsrf(request);
     const body = await readJson(request);
     const cfg = account(env, body.account);
+
+    if (url.pathname === `${API}/extension-pair` || url.pathname === `${API}/extension-import`) {
+      const actorId = String(actor.sub || actor.email || "");
+      if (!actorId) return json({ error: "access_identity_required" }, 401);
+      try {
+        return json(await protonCall(env, cfg, url.pathname.endsWith("extension-pair") ? "extensionPair" : "extensionImport", {
+          actorId, uid: body.uid, email: body.email, token: body.token, bundle: body.bundle,
+        }));
+      } catch { return json({ error: "extension_import_rejected" }, 400); }
+    }
 
     if (url.pathname === `${API}/import-cookies`) {
       if (typeof body.sessionCookie !== "string" || !body.sessionCookie.trim()) throw new Error("缺少浏览器 Session Cookie");
