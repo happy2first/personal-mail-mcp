@@ -239,7 +239,7 @@ export default {
     if (verify) return verify;
 
     if (url.pathname === "/") {
-      return Response.json({ ok: true, service: "personal-mail-mcp", version: "1.4.0", protonLifecycle: "v3-session-import" });
+      return Response.json({ ok: true, service: "personal-mail-mcp", version: "1.5.0", protonLifecycle: "v4-browser-bundle" });
     }
     if (url.pathname !== "/mcp" || request.method !== "POST") return legacyWorker.fetch(request, env, ctx);
 
