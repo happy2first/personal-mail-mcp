@@ -159,6 +159,7 @@ function pageHtml(csrf, nonce, actor) {
     <label for="refreshCookie" style="margin-top:16px"><span class="step">2</span>专用 REFRESH Cookie（必填）</label>
     <div class="muted" style="margin:10px 0">从登录过程中 <code>/api/core/v4/auth/cookies</code> 的 Response Headers 复制 <code>Set-Cookie: REFRESH-&lt;UID&gt;=...</code>；其 Path 应覆盖 <code>/api/auth/refresh</code>。</div>
     <textarea id="refreshCookie" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="REFRESH-&lt;UID&gt;=... 或完整 Set-Cookie 行"></textarea>
+    </details>
   </div>
 
   <div class="card">
@@ -172,7 +173,6 @@ function pageHtml(csrf, nonce, actor) {
       <div class="muted" style="margin:10px 0">仅用于兼容旧流程。正常浏览器 Cookie Session 建议使用上面的必填 Cookie 输入。</div>
       <textarea id="legacySession" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Session JSON 或旧 REFRESH-* Cookie"></textarea>
       <div class="actions"><button id="importLegacy">兼容导入</button><button id="clearLegacy">清空</button></div>
-    </details>
     </details>
   </div>
 
