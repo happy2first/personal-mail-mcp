@@ -9,8 +9,9 @@
 ## 功能
 
 - 一个 MCP Server 管理多个邮箱账号。
-- 内置 Provider：QQ 邮箱、163 邮箱、Gmail。
+- 内置 Provider：QQ 邮箱、163 邮箱、Gmail、Proton Mail。
 - 支持自定义标准 IMAP/SMTP 邮箱。
+- Proton 使用浏览器 Cookie Session + Durable Object 加密持久化，可读取、搜索、解密正文，并支持当前实现中的附件、状态、移动/复制、草稿、发送、回复、转发和事件增量能力。
 - 支持查询全部账号，并允许单个账号失败时返回部分成功结果。
 - 支持邮件列表、搜索、正文、附件、已读/星标状态、移动/复制、文件夹管理、发送、回复、转发、草稿等能力。
 - 每封邮件返回 `messageRef`，后续操作可优先使用该引用。
@@ -36,7 +37,7 @@ personal-mail-mcp Worker
 
 Cloudflare Access 负责客户端身份与边缘访问控制；Worker 还会再次校验 Access JWT 的 issuer、audience 和签名。
 
-邮箱本身使用 IMAP/SMTP 授权码或应用专用密码。本版本不实现 Gmail OAuth2、POP3 或 Proton Mail Bridge。
+QQ/163/Gmail/custom 使用 IMAP/SMTP 授权码或应用专用密码；Proton 直接使用 Proton Web API，不依赖 Proton Mail Bridge。Gmail OAuth2 与 POP3 尚未实现。
 
 ## 支持的邮箱 Provider
 
@@ -45,6 +46,7 @@ Cloudflare Access 负责客户端身份与边缘访问控制；Worker 还会再�
 | `qq` | `imap.qq.com:993` TLS | `smtp.qq.com:465` TLS | QQ 邮箱授权码 |
 | `163` | `imap.163.com:993` TLS | `smtp.163.com:465` TLS | 163 邮箱客户端授权码 |
 | `gmail` | `imap.gmail.com:993` TLS | `smtp.gmail.com:465` TLS | Google App Password |
+| `proton` | Proton Web API | Proton Web API | Browser Session Bundle + Worker 中的 Proton/邮箱解密密码 |
 | `custom` | 自定义 | 自定义 | 邮箱服务商提供的 IMAP/SMTP 凭证 |
 
 163 邮箱连接时会发送 IMAP `ID` 命令，以兼容网易邮箱的客户端识别要求。
@@ -112,10 +114,10 @@ MAIL_ACCOUNTS=163main,163backup,qq,gmail
 每个账号至少需要：
 
 ```text
-MAIL_<ID>_PROVIDER=qq|163|gmail
+MAIL_<ID>_PROVIDER=qq|163|gmail|proton
 MAIL_<ID>_LABEL=显示名称
 MAIL_<ID>_EMAIL=邮箱地址
-MAIL_<ID>_CREDENTIAL=授权码或应用专用密码
+MAIL_<ID>_CREDENTIAL=授权码、应用专用密码或 Proton 登录/解密密码
 ```
 
 建议：
@@ -153,7 +155,30 @@ MAIL_GMAIL_CREDENTIAL=replace-with-google-app-password
 
 Gmail 当前使用 App Password，不使用 Google OAuth。
 
-### 3. Custom Provider
+### 3. Proton Provider
+
+Proton 账号至少配置：
+
+```text
+MAIL_PROTONE_PROVIDER=proton
+MAIL_PROTONE_LABEL=Proton
+MAIL_PROTONE_EMAIL=your-address@proton.me
+MAIL_PROTONE_CREDENTIAL=your-proton-password
+```
+
+双密码模式可额外配置：
+
+```text
+MAIL_PROTONE_MAILBOX_PASSWORD=your-mailbox-password
+```
+
+浏览器会话不通过密码登录导入。推荐使用 `protonmail-chrome-extension` 生成 **Proton Browser Session Bundle v2**：扩展读取同一 UID 的结构化 `AUTH-*`、`REFRESH-*`、`Session-Id` 与辅助 Cookie，并在 `account.proton.me` 同源环境获取 `/api/core/v4/keys/salts`。Worker 会核对 UID、邮箱和 KeySalt/用户密钥 ID，再用 `PROTON_SESSION_KEY` 加密保存到 Durable Object。
+
+管理页：`/proton/import`。手工兼容模式仍支持普通 Session Cookie + 专用 REFRESH Cookie + KeySalt JSON。
+
+`x-pm-uid`、`x-pm-appversion`、`x-pm-apiversion` 等协议 Header 由客户端/Worker 自动生成，不属于需要手工导入的秘密凭证。
+
+### 4. Custom Provider
 
 ```text
 MAIL_WORK_PROVIDER=custom
@@ -250,7 +275,7 @@ npm run deploy
 ## 已知限制
 
 - Gmail OAuth2 尚未实现。
-- 不支持 Proton Mail Bridge / Proton Mail API。
+- Proton 使用非公开 Web API，接口、Cookie 结构或版本要求变化时可能需要更新适配；不依赖 Proton Mail Bridge。
 - 不支持 POP3。
 - Cloudflare Workers 到部分邮箱服务商的 TCP/TLS 行为可能受网络环境或服务商安全策略影响。
 - 不同邮箱服务商对 IMAP 扩展、文件夹命名和限流策略存在差异。
