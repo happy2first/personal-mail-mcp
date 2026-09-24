@@ -1,4 +1,5 @@
 import { getAccount, listAccountIds } from "../mail-config.js";
+import "./extension-session.js";
 import {
   isProtonAccount,
   protonAuthStatus,
@@ -115,6 +116,7 @@ function pageHtml(csrf, nonce, actor) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="proton-extension-csrf" content="${csrf}">
 <title>Proton Session 管理</title>
 <style nonce="${nonce}">
 :root{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:#172033;background:#f5f7fa}*{box-sizing:border-box}body{margin:0}.wrap{max-width:960px;margin:0 auto;padding:28px 18px 56px}.head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:20px}.head h1{font-size:26px;margin:0 0 8px}.muted{color:#667085;font-size:13px;line-height:1.6}.card{background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 1px 2px rgba(16,24,40,.04)}label{display:block;font-weight:650;font-size:14px;margin-bottom:8px}select,textarea{width:100%;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#172033;font:inherit}select{height:42px;padding:0 12px}textarea{min-height:130px;padding:12px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.item{border:1px solid #eaecf0;border-radius:8px;padding:12px}.item b{display:block;font-size:12px;color:#667085;margin-bottom:4px}.item span{font-size:14px;word-break:break-word}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}button{appearance:none;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#344054;padding:9px 14px;font-weight:650;cursor:pointer;min-height:40px}button.primary{background:#1677ff;border-color:#1677ff;color:#fff}button.danger{color:#b42318;border-color:#fda29b}button:disabled{opacity:.55;cursor:not-allowed}.notice{border-left:3px solid #1677ff;padding:10px 12px;background:#f0f6ff;border-radius:6px;font-size:13px;line-height:1.65;margin-top:10px}.notice.warn{border-left-color:#f79009;background:#fffaeb}.result{white-space:pre-wrap;word-break:break-word;background:#101828;color:#f2f4f7;border-radius:8px;padding:12px;min-height:56px;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ok{color:#067647}.bad{color:#b42318}.warnText{color:#b54708}.pill{display:inline-block;border-radius:999px;padding:3px 8px;background:#f2f4f7;font-size:12px}.summary{font-size:17px;font-weight:700;margin-bottom:14px;padding:12px 14px;border-radius:8px;background:#f2f4f7}.summary.ok{background:#ecfdf3}.summary.warnText{background:#fffaeb}.summary.bad{background:#fef3f2}.step{display:inline-flex;width:25px;height:25px;align-items:center;justify-content:center;border-radius:50%;background:#1677ff;color:#fff;font-size:13px;margin-right:7px}.footer{margin-top:12px;color:#98a2b3;font-size:12px}details{border-top:1px solid #eaecf0;margin-top:18px;padding-top:14px}summary{cursor:pointer;font-weight:650;color:#475467}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f2f4f7;padding:1px 4px;border-radius:4px}@media(max-width:760px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:560px){.wrap{padding:18px 12px 40px}.head{display:block}.head h1{font-size:22px}.grid{grid-template-columns:1fr}.card{padding:16px}button{width:100%}}
@@ -128,7 +130,13 @@ function pageHtml(csrf, nonce, actor) {
     <label for="account">Proton 账号</label>
     <select id="account"></select>
     <div class="actions"><button id="refreshStatus">刷新状态</button><button id="testSession">测试当前读取权限</button><button id="testRefresh">测试自动续期</button></div>
-    <div class="notice warn">“测试自动续期”会真实调用一次 <code>POST /auth/refresh</code>。当前 Proton 浏览器 Cookie 模式依赖 <code>AUTH-&lt;UID&gt;</code>；只要它的 Path 能覆盖 <code>/api/auth/refresh</code>（例如浏览器当前常见的 <code>/api/</code>），就具备刷新请求所需的 Cookie 路径条件。</div>
+    <div class="notice warn">“测试自动续期”会真实调用一次 <code>POST /auth/refresh</code>，并保存 Proton 返回的新 <code>REFRESH-&lt;UID&gt;</code>、<code>AUTH-&lt;UID&gt;</code> 与 Session Cookie。浏览器与 Worker 同时刷新同一 Session 可能产生竞争，测试时请避免重复点击。</div>
+  </div>
+
+  <div class="card">
+    <label><span class="step">推荐</span>浏览器扩展一键导入</label>
+    <div class="notice">扩展会直接读取浏览器结构化 Cookie Jar（AUTH、REFRESH、Session-Id 及辅助 Cookie），并在 <code>account.proton.me</code> 同源环境自动重放 <code>/api/core/v4/keys/salts</code>。无需手工复制 x-pm-* 请求头，也不会读取 Proton 密码。</div>
+    <div class="muted" style="margin-top:10px">保持本页已通过 Cloudflare Access 登录，再从 Proton Mail 页面打开 “Proton → Personal Mail MCP” 扩展并选择目标账号。</div>
   </div>
 
   <div class="card">
@@ -144,8 +152,8 @@ function pageHtml(csrf, nonce, actor) {
     <div class="actions"><button id="importCookies" class="primary">校验并导入 Cookie Session</button><button id="clearCookies">清空 Cookie 输入</button></div>
 
     <details>
-      <summary>可选：额外的专用刷新 Cookie</summary>
-      <div class="muted" style="margin:10px 0">当前浏览器通常看不到单独的 Refresh Cookie，不需要强行寻找。只有以后 Proton 实际下发了额外 Cookie，且其 Path 能覆盖 <code>/api/auth/refresh</code> 时才需要填写。</div>
+      <summary>专用 REFRESH Cookie（手工模式必需）</summary>
+      <div class="muted" style="margin:10px 0">从登录时 <code>/api/core/v4/auth/cookies</code> 的 Response Headers 复制 <code>REFRESH-&lt;UID&gt;</code>。其 Path 通常为 <code>/api/auth/refresh</code>；扩展模式会自动读取，不需要手工填写。</div>
       <textarea id="refreshCookie" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="可留空；支持 NAME=VALUE、Set-Cookie 行或 JSON"></textarea>
     </details>
   </div>
@@ -183,16 +191,17 @@ function yes(v){return v?'✅ 是':'❌ 否'}
 function renderStatus(s){
   const session=s.session||{},risk=s.risk||{},attempt=s.lastAuthAttempt||{},refresh=s.refresh||{},keys=s.keyMaterial||{};
   let summary='';let cls='summary ';
-  if(!s.hasSession){summary='❌ 未保存有效 Proton Session，需要从浏览器导入 Cookie';cls+='bad'}
+  if(!s.hasSession){summary='❌ 未保存有效 Proton Session，需要从浏览器导入';cls+='bad'}
   else if(s.reauthRequired){summary='⚠️ Session 材料仍已保存，但当前认证需要恢复；不要使用 Worker 密码 reauthorize';cls+='warnText'}
-  else if(session.cookieAuth&&refresh.capable&&refresh.verified&&keys.imported){summary='✅ Cookie Session、自动续期和邮件解密均已验证';cls+='ok'}
-  else if(session.cookieAuth&&refresh.capable&&!refresh.verified){summary='⚠️ AUTH Cookie 可用于刷新路径，但还没有成功执行自动续期测试';cls+='warnText'}
-  else if(session.cookieAuth&&!refresh.capable){summary='⚠️ 当前 Cookie Session 可用，但没有可发送到 /api/auth/refresh 的 AUTH Cookie';cls+='warnText'}
+  else if(session.cookieAuth&&refresh.capable&&refresh.verified&&keys.imported){summary='✅ Browser Session、自动续期和邮件解密材料均已验证';cls+='ok'}
+  else if(session.cookieAuth&&refresh.capable&&!refresh.verified){summary='⚠️ AUTH、REFRESH、Session-Id 已就绪；尚未执行自动续期测试';cls+='warnText'}
+  else if(session.cookieAuth&&!refresh.capable){summary='⚠️ Browser Session 可用，但 AUTH / REFRESH / Session-Id 组件不完整';cls+='warnText'}
   else{summary='⚠️ Session 已保存，请检查自动续期和 KeySalt 状态';cls+='warnText'}
   $('summary').className=cls;$('summary').textContent=summary;
   const rows=[
     ['Session',s.hasSession?'已保存':'未保存'],['需要恢复',yes(s.reauthRequired)],['Cookie Auth',yes(session.cookieAuth)],
-    ['其他 Cookie 数',session.normalCookieCount??s.transport?.normalCookieCount],['可用于刷新 AUTH Cookie 数',refresh.cookieCount??s.transport?.refreshCookieCount],['自动续期材料',yes(refresh.capable)],
+    ['AUTH Cookie',yes((refresh.authCookieCount??s.transport?.authCookieCount)>0)],['REFRESH Cookie',yes((refresh.cookieCount??s.transport?.refreshCookieCount)>0)],['Session-Id',yes(refresh.sessionIdPresent??s.transport?.sessionIdPresent)],
+    ['其他 Cookie 数',session.normalCookieCount??s.transport?.normalCookieCount],['自动续期材料',yes(refresh.capable)],
     ['自动续期已验证',yes(refresh.verified)],['最后续期结果',refresh.lastResult],['最后续期时间',fmtTime(refresh.lastAttemptAt)],
     ['KeySalt 数',keys.keySaltCount],['邮件解密材料',yes(keys.imported)],['最后导入',fmtTime(session.importedAt)],
     ['最后校验',fmtTime(session.lastValidatedAt)],['UID 尾号',session.uidSuffix],['总 Cookie 数',s.transport?.cookieCount],
@@ -207,7 +216,7 @@ async function act(fn){if(busy)return;setBusy(true);try{const data=await fn();$(
 $('account').addEventListener('change',()=>act(loadStatus));
 $('refreshStatus').onclick=()=>act(loadStatus);
 $('testSession').onclick=()=>act(()=>call('${API}/validate',{method:'POST',body:{account:$('account').value}}));
-$('testRefresh').onclick=()=>{if(confirm('将真实执行一次 Proton POST /auth/refresh，以验证当前 AUTH Cookie 能否自动续期并保存服务器返回的新 Cookie。继续？'))act(()=>call('${API}/test-refresh',{method:'POST',body:{account:$('account').value}}))};
+$('testRefresh').onclick=()=>{if(confirm('将真实执行一次 Proton POST /auth/refresh，以验证 REFRESH Cookie 续期并保存服务器返回的新 Cookie。继续？'))act(()=>call('${API}/test-refresh',{method:'POST',body:{account:$('account').value}}))};
 $('importCookies').onclick=()=>act(async()=>{const sessionCookie=$('sessionCookie').value.trim(),refreshCookie=$('refreshCookie').value.trim();if(!sessionCookie)throw new Error('请先粘贴浏览器 Session Cookie');const data=await call('${API}/import-cookies',{method:'POST',body:{account:$('account').value,sessionCookie,refreshCookie:refreshCookie||null}});$('sessionCookie').value='';$('refreshCookie').value='';return data});
 $('clearCookies').onclick=()=>{$('sessionCookie').value='';$('refreshCookie').value='';$('sessionCookie').focus()};
 $('importKeySalts').onclick=()=>act(async()=>{const input=$('keySalts').value.trim();if(!input)throw new Error('请先粘贴 keys/salts Response JSON');const data=await call('${API}/import',{method:'POST',body:{account:$('account').value,session:input}});$('keySalts').value='';return data});
@@ -257,6 +266,21 @@ export async function handleProtonImport(request, env, actor = {}) {
     const body = await readJson(request);
     const cfg = account(env, body.account);
 
+    const actorKey = String(actor?.email || actor?.sub || "").trim().toLowerCase();
+    if (url.pathname === `${API}/extension-pair`) {
+      return json(await protonCall(env, cfg, "extensionPair", {
+        uid: body.uid,
+        email: body.email,
+        actorKey,
+      }));
+    }
+    if (url.pathname === `${API}/extension-import`) {
+      return json(await protonCall(env, cfg, "extensionImport", {
+        token: body.token,
+        bundle: body.bundle,
+        actorKey,
+      }));
+    }
     if (url.pathname === `${API}/import-cookies`) {
       if (typeof body.sessionCookie !== "string" || !body.sessionCookie.trim()) throw new Error("缺少浏览器 Session Cookie");
       const refreshCookie = ["string", "object"].includes(typeof body.refreshCookie) ? body.refreshCookie : null;
