@@ -45,6 +45,7 @@ Cloudflare Access 负责客户端身份与边缘访问控制；Worker 还会再�
 | `qq` | `imap.qq.com:993` TLS | `smtp.qq.com:465` TLS | QQ 邮箱授权码 |
 | `163` | `imap.163.com:993` TLS | `smtp.163.com:465` TLS | 163 邮箱客户端授权码 |
 | `gmail` | `imap.gmail.com:993` TLS | `smtp.gmail.com:465` TLS | Google App Password |
+| `proton` | Proton Web API | Proton Web API | 浏览器 Session Bundle + Worker 中已有解密密码 |
 | `custom` | 自定义 | 自定义 | 邮箱服务商提供的 IMAP/SMTP 凭证 |
 
 163 邮箱连接时会发送 IMAP `ID` 命令，以兼容网易邮箱的客户端识别要求。
@@ -217,6 +218,14 @@ npx wrangler secret put POLICY_AUD
 
 查询类 Tool 不传 `account` 时通常默认 `all`。发送、文件夹管理等写操作必须明确指定账号。
 
+## Proton 浏览器扩展导入
+
+Proton 推荐使用配套仓库 `happy2first/protonmail-chrome-extension`。扩展不会读取或上传 Proton 登录密码，而是把当前已登录浏览器的结构化 Cookie Jar（至少包括 `AUTH-<UID>`、`REFRESH-<UID>`、`Session-Id`）和 `/core/v4/keys/salts` 返回的 KeySalt 组成 Browser Session Bundle v2，再通过一次性配对接口导入。
+
+Worker 不信任扩展快照中的邮箱归属：导入前会使用 Bundle 中的 Cookie Session 再次请求 Proton `/core/v4/addresses` 和 `/core/v4/users`，核对目标邮箱与有效用户密钥 ID。导入成功后，Cookie 与 KeySalt 继续沿用 `PROTON_SESSION_KEY` AES-GCM 加密持久化。后续 `POST /auth/refresh` 返回的新 REFRESH/AUTH/Session Cookie 会更新 Cookie Jar 并持久化。
+
+手工兼容模式仍保留：完整普通 Session Cookie Header + 专用 `REFRESH-<UID>` Cookie + KeySalt JSON。用户不需要手工填写 `x-pm-uid`、`x-pm-appversion` 或 `x-pm-apiversion`，这些由 Worker 协议层生成。
+
 ## 本地检查与部署
 
 语法检查：
@@ -250,7 +259,7 @@ npm run deploy
 ## 已知限制
 
 - Gmail OAuth2 尚未实现。
-- 不支持 Proton Mail Bridge / Proton Mail API。
+- Proton 不依赖 Proton Mail Bridge；通过受 Cloudflare Access 保护的 `/proton/import` 导入浏览器 Session Bundle。扩展自动采集 AUTH、REFRESH、Session-Id、辅助 Cookie 和 KeySalt；Worker 负责 x-pm-* 请求头、Cookie rotation 与加密持久化。
 - 不支持 POP3。
 - Cloudflare Workers 到部分邮箱服务商的 TCP/TLS 行为可能受网络环境或服务商安全策略影响。
 - 不同邮箱服务商对 IMAP 扩展、文件夹命名和限流策略存在差异。
