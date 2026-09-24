@@ -40,7 +40,19 @@ function pathCoversRequest(cookiePath, requestPath = PROTON_REFRESH_REQUEST_PATH
 }
 
 export function isRefreshCapableCookie(cookie) {
-  return /^AUTH-/i.test(String(cookie?.name || "")) && pathCoversRequest(cookie?.path, PROTON_REFRESH_REQUEST_PATH);
+  return /^REFRESH-/i.test(String(cookie?.name || "")) && pathCoversRequest(cookie?.path, PROTON_REFRESH_REQUEST_PATH);
+}
+
+export function countAuthCookies(state, uid = "") {
+  const expected = uid ? `AUTH-${uid}` : "";
+  return (Array.isArray(state) ? state : []).filter((cookie) => {
+    const name = String(cookie?.name || "");
+    return expected ? name === expected : /^AUTH-/i.test(name);
+  }).length;
+}
+
+export function countSessionIdCookies(state) {
+  return (Array.isArray(state) ? state : []).filter((cookie) => String(cookie?.name || "").toLowerCase() === "session-id").length;
 }
 
 function normalizeExtraCookieObject(raw, baseUrl) {
@@ -171,11 +183,12 @@ function normalizeSessionCookieInput(value, candidate) {
   const raw = Array.isArray(auth.CookieState) ? auth.CookieState : [];
   const cookies = raw.slice(0, MAX_COOKIES).map((item) => {
     const name = text(item?.name);
+    const isSessionId = name.toLowerCase() === "session-id";
     return {
       name,
       value: text(item?.value),
-      domain: host,
-      hostOnly: true,
+      domain: isSessionId ? "proton.me" : host,
+      hostOnly: !isSessionId,
       path: /^AUTH-/i.test(name) ? PROTON_AUTH_COOKIE_PATH : "/",
       secure: true,
       expiresAt: null,
@@ -219,6 +232,10 @@ export async function validateCookieBundle(cfg, env, { sessionCookie, refreshCoo
   const candidate = new ProtonClient(cfg, env);
   const session = normalizeSessionCookieInput(sessionCookie, candidate);
   const extraCookies = normalizeRefreshCookieInput(refreshCookie, candidate.baseUrl);
+  const expectedRefreshName = `REFRESH-${session.auth.UID}`;
+  if (!extraCookies.some((cookie) => cookie.name === expectedRefreshName)) {
+    throw new Error(`缺少当前 UID 的专用刷新 Cookie：${expectedRefreshName}`);
+  }
   candidate.setAuth(session.auth);
   candidate.setCookieState(mergeCookieState(session.cookies, extraCookies));
 
@@ -235,9 +252,11 @@ export async function validateCookieBundle(cfg, env, { sessionCookie, refreshCoo
 
   const cookieState = candidate.getCookieState();
   const refreshCookieCount = countRefreshCookies(cookieState);
-  if (!refreshCookieCount) {
-    throw new Error(`Cookie Session 已校验，但没有 AUTH-* Cookie 可发送到 ${PROTON_REFRESH_REQUEST_PATH}`);
-  }
+  const authCookieCount = countAuthCookies(cookieState, session.auth.UID);
+  const sessionIdCookieCount = countSessionIdCookies(cookieState);
+  if (!refreshCookieCount) throw new Error(`Cookie Session 已校验，但没有 REFRESH-* Cookie 可发送到 ${PROTON_REFRESH_REQUEST_PATH}`);
+  if (!authCookieCount) throw new Error("Cookie Session 已校验，但缺少当前 UID 的 AUTH Cookie");
+  if (!sessionIdCookieCount) throw new Error("Cookie Session 已校验，但缺少 Session-Id Cookie");
   const auth = {
     ...candidate.auth,
     cookies: true,
@@ -255,8 +274,10 @@ export async function validateCookieBundle(cfg, env, { sessionCookie, refreshCoo
       refreshedDuringValidation,
       cookieCount: cookieState.length,
       normalCookieCount: Math.max(0, cookieState.length - refreshCookieCount),
+      authCookieCount,
+      sessionIdCookieCount,
       refreshCookieCount,
-      refreshCapable: true,
+      refreshCapable: authCookieCount > 0 && sessionIdCookieCount > 0 && refreshCookieCount > 0,
       extraCookieCount: extraCookies.length,
     },
   };
