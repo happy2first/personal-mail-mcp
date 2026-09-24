@@ -18,6 +18,7 @@ import {
 } from "./proton/provider.js";
 import { handleProtonImport } from "./proton/import-page.js";
 import { handleProtonVerification } from "./proton/verify.js";
+import "./proton/extension-session.js";
 export { ProtonSession } from "./proton/session.js";
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -239,7 +240,7 @@ export default {
     if (verify) return verify;
 
     if (url.pathname === "/") {
-      return Response.json({ ok: true, service: "personal-mail-mcp", version: "1.4.0", protonLifecycle: "v3-session-import" });
+      return Response.json({ ok: true, service: "personal-mail-mcp", version: "1.5.0", protonLifecycle: "v4-extension-bundle" });
     }
     if (url.pathname !== "/mcp" || request.method !== "POST") return legacyWorker.fetch(request, env, ctx);
 
