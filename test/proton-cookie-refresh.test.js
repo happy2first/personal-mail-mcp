@@ -17,32 +17,29 @@ const pageUrl = new URL("../src/proton/import-page.js", import.meta.url);
 
 const read = (url) => readFile(url, "utf8");
 
-test("AUTH cookie on /api/ is refresh-capable for /api/auth/refresh", () => {
+test("dedicated REFRESH cookie is refresh-capable for /api/auth/refresh", () => {
   const cookie = {
-    name: "AUTH-uid-demo",
+    name: "REFRESH-uid-demo",
     value: "secret",
     domain: "mail.proton.me",
-    path: PROTON_AUTH_COOKIE_PATH,
+    path: PROTON_REFRESH_REQUEST_PATH,
   };
   assert.equal(PROTON_AUTH_COOKIE_PATH, "/api/");
   assert.equal(PROTON_REFRESH_REQUEST_PATH, "/api/auth/refresh");
   assert.equal(isRefreshCapableCookie(cookie), true);
   assert.equal(countRefreshCookies([cookie]), 1);
-});
-
-test("legacy imported AUTH cookie on / still covers refresh endpoint", () => {
-  assert.equal(isRefreshCapableCookie({ name: "AUTH-uid-demo", path: "/" }), true);
+  assert.equal(isRefreshCapableCookie({ name: "AUTH-uid-demo", path: "/api/" }), false);
   assert.equal(isRefreshCapableCookie({ name: "Session-Id", path: "/" }), false);
 });
 
 test("optional extra cookie accepts any path that covers refresh request", () => {
   const rows = normalizeRefreshCookieInput(
-    "Set-Cookie: AUTH-uid-demo=refresh-secret; Domain=.proton.me; Path=/api/; Secure; HttpOnly",
+    "Set-Cookie: REFRESH-uid-demo=refresh-secret; Domain=mail.proton.me; Path=/api/auth/refresh; Secure; HttpOnly",
     "https://mail.proton.me/api",
   );
-  assert.equal(rows[0].domain, "proton.me");
-  assert.equal(rows[0].hostOnly, false);
-  assert.equal(rows[0].path, "/api/");
+  assert.equal(rows[0].domain, "mail.proton.me");
+  assert.equal(rows[0].hostOnly, true);
+  assert.equal(rows[0].path, "/api/auth/refresh");
   assert.throws(
     () => normalizeRefreshCookieInput("Set-Cookie: X=1; Path=/other/", "https://mail.proton.me/api"),
     /不会发送到 \/api\/auth\/refresh/,
@@ -90,7 +87,7 @@ test("cookie refresh failure preserves canonicalized cookie session and diagnost
   assert.match(session, /contentTypeOmitted/);
 });
 
-test("management page makes extra refresh cookie optional and keeps explicit refresh test", async () => {
+test("management page requires dedicated refresh cookie and keeps explicit refresh test", async () => {
   const session = await read(sessionUrl);
   const keySession = await read(keySessionUrl);
   const page = await read(pageUrl);
@@ -98,11 +95,11 @@ test("management page makes extra refresh cookie optional and keeps explicit ref
   assert.match(session, /action === "importCookieBundle"/);
   assert.match(session, /action === "testRefresh"/);
   assert.match(session, /refreshSucceeded: true/);
-  assert.match(session, /可发送到 \/api\/auth\/refresh 的 AUTH-\* Cookie/);
+  assert.match(session, /缺少 REFRESH-\* Cookie/);
   assert.match(session, /diagnostics: refreshDiagnostics/);
   assert.match(page, /id="sessionCookie"/);
-  assert.match(page, /可选：额外的专用刷新 Cookie/);
-  assert.match(page, /refreshCookie:refreshCookie\|\|null/);
+  assert.match(page, /专用 REFRESH Cookie（必填）/);
+  assert.match(page, /if\(!refreshCookie\)throw new Error/);
   assert.match(page, /test-refresh/);
   assert.match(page, /自动续期已验证/);
 });
