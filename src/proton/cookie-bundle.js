@@ -40,7 +40,11 @@ function pathCoversRequest(cookiePath, requestPath = PROTON_REFRESH_REQUEST_PATH
 }
 
 export function isRefreshCapableCookie(cookie) {
-  return /^AUTH-/i.test(String(cookie?.name || "")) && pathCoversRequest(cookie?.path, PROTON_REFRESH_REQUEST_PATH);
+  return /^REFRESH-/i.test(String(cookie?.name || "")) && pathCoversRequest(cookie?.path, PROTON_REFRESH_REQUEST_PATH);
+}
+
+export function isAuthCookie(cookie) {
+  return /^AUTH-/i.test(String(cookie?.name || "")) && pathCoversRequest(cookie?.path, "/api/core/v4/addresses");
 }
 
 function normalizeExtraCookieObject(raw, baseUrl) {
@@ -197,6 +201,14 @@ export function countRefreshCookies(state) {
   return (Array.isArray(state) ? state : []).filter(isRefreshCapableCookie).length;
 }
 
+export function countAuthCookies(state) {
+  return (Array.isArray(state) ? state : []).filter(isAuthCookie).length;
+}
+
+export function hasSessionId(state) {
+  return (Array.isArray(state) ? state : []).some((cookie) => String(cookie?.name || "").toLowerCase() === "session-id");
+}
+
 function addressesFromPayload(payload) {
   return (Array.isArray(payload?.Addresses) ? payload.Addresses : [])
     .map((item) => text(item?.Email ?? item?.email).toLowerCase())
@@ -234,10 +246,12 @@ export async function validateCookieBundle(cfg, env, { sessionCookie, refreshCoo
   }
 
   const cookieState = candidate.getCookieState();
+  const authCookieCount = countAuthCookies(cookieState);
   const refreshCookieCount = countRefreshCookies(cookieState);
-  if (!refreshCookieCount) {
-    throw new Error(`Cookie Session 已校验，但没有 AUTH-* Cookie 可发送到 ${PROTON_REFRESH_REQUEST_PATH}`);
-  }
+  const sessionIdPresent = hasSessionId(cookieState);
+  if (!authCookieCount) throw new Error("Cookie Session 已校验，但缺少可用于普通 Proton API 的 AUTH-* Cookie");
+  if (!refreshCookieCount) throw new Error(`Cookie Session 已校验，但缺少可发送到 ${PROTON_REFRESH_REQUEST_PATH} 的 REFRESH-* Cookie`);
+  if (!sessionIdPresent) throw new Error("Cookie Session 已校验，但缺少 Session-Id Cookie");
   const auth = {
     ...candidate.auth,
     cookies: true,
@@ -255,7 +269,9 @@ export async function validateCookieBundle(cfg, env, { sessionCookie, refreshCoo
       refreshedDuringValidation,
       cookieCount: cookieState.length,
       normalCookieCount: Math.max(0, cookieState.length - refreshCookieCount),
+      authCookieCount,
       refreshCookieCount,
+      sessionIdPresent,
       refreshCapable: true,
       extraCookieCount: extraCookies.length,
     },
