@@ -113,14 +113,14 @@ async function readJson(request) {
 }
 
 function pageHtml(csrf, nonce) {
-  return \`<!doctype html>
+  return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="proton-extension-csrf" content="\${escapeHtml(csrf)}">
+<meta name="proton-extension-csrf" content="${escapeHtml(csrf)}">
 <title>Proton Mail 连接</title>
-<style nonce="\${nonce}">
+<style nonce="${nonce}">
 :root{font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;color:#172033;background:#f5f7fa}*{box-sizing:border-box}body{margin:0}.wrap{max-width:860px;margin:0 auto;padding:28px 18px 56px}.head{margin-bottom:18px}.head h1{font-size:26px;margin:0 0 6px}.muted{color:#667085;font-size:13px;line-height:1.6}.card{background:#fff;border:1px solid #e4e7ec;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 1px 2px rgba(16,24,40,.04)}label{display:block;font-weight:650;font-size:14px;margin-bottom:8px}select,textarea{width:100%;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#172033;font:inherit}select{height:42px;padding:0 12px}textarea{min-height:130px;padding:12px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.5}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.item{border:1px solid #eaecf0;border-radius:8px;padding:12px}.item b{display:block;font-size:12px;color:#667085;margin-bottom:4px}.item span{font-size:14px;word-break:break-word}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}button{appearance:none;border:1px solid #d0d5dd;border-radius:8px;background:#fff;color:#344054;padding:9px 14px;font-weight:650;cursor:pointer;min-height:40px}button.primary{background:#1677ff;border-color:#1677ff;color:#fff}button.danger{color:#b42318;border-color:#fda29b}button:disabled{opacity:.55;cursor:not-allowed}.notice{border-left:3px solid #1677ff;padding:10px 12px;background:#f0f6ff;border-radius:6px;font-size:13px;line-height:1.6;margin-top:10px}.notice.warn{border-left-color:#f79009;background:#fffaeb}.result{white-space:pre-wrap;word-break:break-word;background:#101828;color:#f2f4f7;border-radius:8px;padding:12px;min-height:56px;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.ok{color:#067647}.bad{color:#b42318}.warnText{color:#b54708}.summary{font-size:16px;font-weight:700;margin:12px 0;padding:12px 14px;border-radius:8px;background:#f2f4f7}.summary.ok{background:#ecfdf3}.summary.warnText{background:#fffaeb}.summary.bad{background:#fef3f2}.step{display:inline-flex;width:25px;height:25px;align-items:center;justify-content:center;border-radius:50%;background:#1677ff;color:#fff;font-size:13px;margin-right:7px}.footer{margin-top:12px;color:#98a2b3;font-size:12px}details{border-top:1px solid #eaecf0;margin-top:16px;padding-top:12px}summary{cursor:pointer;font-weight:650;color:#475467}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#f2f4f7;padding:1px 4px;border-radius:4px}.compact{margin-top:8px}.hidden{display:none}@media(max-width:760px){.grid{grid-template-columns:1fr 1fr}}@media(max-width:560px){.wrap{padding:18px 12px 40px}.head h1{font-size:22px}.grid{grid-template-columns:1fr 1fr}.card{padding:16px}button{width:100%}}
 </style>
 </head>
@@ -181,8 +181,8 @@ function pageHtml(csrf, nonce) {
   <div id="resultCard" class="card hidden"><label>操作结果</label><div id="result" class="result"></div></div>
   <div class="footer">Session、Cookie 和 KeySalt 在 Worker 中加密保存；本页不写入 localStorage。</div>
 </div>
-<script nonce="\${nonce}">
-const csrf=\${JSON.stringify(csrf)};const $=id=>document.getElementById(id);let busy=false;
+<script nonce="${nonce}">
+const csrf=${JSON.stringify(csrf)};const $=id=>document.getElementById(id);let busy=false;
 function setBusy(v){busy=v;document.querySelectorAll('button').forEach(b=>b.disabled=v)}
 function fmtTime(v){if(!v)return '—';try{return new Date(Number(v)).toLocaleString()}catch{return String(v)}}
 function safe(v){return v===undefined||v===null||v===''?'—':String(v)}
@@ -220,22 +220,22 @@ function renderStatus(s){
   ]);
 }
 async function call(path,{method='GET',body}={}){const headers={'accept':'application/json'};if(method!=='GET'){headers['content-type']='application/json';headers['x-csrf-token']=csrf}const r=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin',cache:'no-store'});let data;try{data=await r.json()}catch{data={error:'服务器返回不可解析响应'}}if(!r.ok)throw Object.assign(new Error(data.error||('HTTP '+r.status)),{data});return data}
-async function loadAccounts(){const data=await call('\${API}/accounts');$('account').innerHTML=data.accounts.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.label)+' · '+esc(a.email)+'</option>').join('');if(data.accounts.length)await loadStatus();else{$('summary').textContent='没有已配置的 Proton 账号';$('status').innerHTML=''}}
-async function loadStatus(){const id=$('account').value;if(!id)return;const data=await call('\${API}/status?account='+encodeURIComponent(id));renderStatus(data.status);return data}
+async function loadAccounts(){const data=await call('${API}/accounts');$('account').innerHTML=data.accounts.map(a=>'<option value="'+esc(a.id)+'">'+esc(a.label)+' · '+esc(a.email)+'</option>').join('');if(data.accounts.length)await loadStatus();else{$('summary').textContent='没有已配置的 Proton 账号';$('status').innerHTML=''}}
+async function loadStatus(){const id=$('account').value;if(!id)return;const data=await call('${API}/status?account='+encodeURIComponent(id));renderStatus(data.status);return data}
 async function act(fn){if(busy)return;setBusy(true);try{const data=await fn();$('resultCard').classList.remove('hidden');$('result').textContent=JSON.stringify(data,null,2);await loadStatus();return data}catch(e){$('resultCard').classList.remove('hidden');$('result').textContent=JSON.stringify(e.data||{error:e.message},null,2)}finally{setBusy(false)}}
 $('account').addEventListener('change',()=>act(loadStatus));
 $('refreshStatus').onclick=()=>act(loadStatus);
-$('testSession').onclick=()=>act(()=>call('\${API}/validate',{method:'POST',body:{account:$('account').value}}));
-$('testRefresh').onclick=()=>{if(confirm('执行一次真实会话续期？Proton 会返回并替换新的 Session Cookie。'))act(()=>call('\${API}/test-refresh',{method:'POST',body:{account:$('account').value}}))};
-$('importCookies').onclick=()=>act(async()=>{const sessionCookie=$('sessionCookie').value.trim(),refreshCookie=$('refreshCookie').value.trim();if(!sessionCookie)throw new Error('请粘贴普通 Session Cookie');if(!refreshCookie)throw new Error('请粘贴同一 UID 的 REFRESH Cookie');const data=await call('\${API}/import-cookies',{method:'POST',body:{account:$('account').value,sessionCookie,refreshCookie}});$('sessionCookie').value='';$('refreshCookie').value='';return data});
+$('testSession').onclick=()=>act(()=>call('${API}/validate',{method:'POST',body:{account:$('account').value}}));
+$('testRefresh').onclick=()=>{if(confirm('执行一次真实会话续期？Proton 会返回并替换新的 Session Cookie。'))act(()=>call('${API}/test-refresh',{method:'POST',body:{account:$('account').value}}))};
+$('importCookies').onclick=()=>act(async()=>{const sessionCookie=$('sessionCookie').value.trim(),refreshCookie=$('refreshCookie').value.trim();if(!sessionCookie)throw new Error('请粘贴普通 Session Cookie');if(!refreshCookie)throw new Error('请粘贴同一 UID 的 REFRESH Cookie');const data=await call('${API}/import-cookies',{method:'POST',body:{account:$('account').value,sessionCookie,refreshCookie}});$('sessionCookie').value='';$('refreshCookie').value='';return data});
 $('clearCookies').onclick=()=>{$('sessionCookie').value='';$('refreshCookie').value='';$('sessionCookie').focus()};
-$('importKeySalts').onclick=()=>act(async()=>{const input=$('keySalts').value.trim();if(!input)throw new Error('请粘贴 KeySalt JSON');let keySalts;try{const parsed=JSON.parse(input);keySalts=parsed?.KeySalts??parsed?.keySalts??parsed}catch{throw new Error('KeySalt JSON 无效')}const data=await call('\${API}/import-key-salts',{method:'POST',body:{account:$('account').value,keySalts}});$('keySalts').value='';return data});
+$('importKeySalts').onclick=()=>act(async()=>{const input=$('keySalts').value.trim();if(!input)throw new Error('请粘贴 KeySalt JSON');let keySalts;try{const parsed=JSON.parse(input);keySalts=parsed?.KeySalts??parsed?.keySalts??parsed}catch{throw new Error('KeySalt JSON 无效')}const data=await call('${API}/import-key-salts',{method:'POST',body:{account:$('account').value,keySalts}});$('keySalts').value='';return data});
 $('clearKeySalts').onclick=()=>{$('keySalts').value='';$('keySalts').focus()};
-$('clear').onclick=()=>{if(confirm('清除所选 Proton 账号已保存的 Session 和 KeySalt？'))act(()=>call('\${API}/clear',{method:'POST',body:{account:$('account').value}}))};
-$('resetRisk').onclick=()=>{if(confirm('仅清除 Worker 本地 2028 密码登录保护锁？'))act(()=>call('\${API}/reset-risk',{method:'POST',body:{account:$('account').value}}))};
+$('clear').onclick=()=>{if(confirm('清除所选 Proton 账号已保存的 Session 和 KeySalt？'))act(()=>call('${API}/clear',{method:'POST',body:{account:$('account').value}}))};
+$('resetRisk').onclick=()=>{if(confirm('仅清除 Worker 本地 2028 密码登录保护锁？'))act(()=>call('${API}/reset-risk',{method:'POST',body:{account:$('account').value}}))};
 loadAccounts().catch(e=>{$('resultCard').classList.remove('hidden');$('result').textContent=e.message});
 </script>
-</body></html>\`;
+</body></html>`;
 }
 
 function pageResponse(actor) {
