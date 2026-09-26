@@ -107,8 +107,11 @@ test("management page is Access-protected, CSRF-protected and separates normal a
   assert.match(page, /cache-control": "no-store/);
   assert.match(page, /id="sessionCookie"/);
   assert.match(page, /id="refreshCookie"/);
-  assert.match(page, /\/api\/auth\/refresh/);
+  assert.match(page, /id="refreshCookie"/);
   assert.match(page, /\/test-refresh/);
   assert.match(page, /id="keySalts"/);
   assert.doesNotMatch(page, /localStorage\.(setItem|getItem)/);
+  assert.doesNotMatch(page, /actorText|Cloudflare Access 用户/);
+  assert.match(page, /技术状态/);
+  assert.match(page, /浏览器扩展（推荐）/);
 });

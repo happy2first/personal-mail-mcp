@@ -174,7 +174,7 @@ MAIL_PROTONE_MAILBOX_PASSWORD=your-mailbox-password
 
 浏览器会话不通过密码登录导入。推荐使用 `protonmail-chrome-extension` 生成 **Proton Browser Session Bundle v2**：扩展读取同一 UID 的结构化 `AUTH-*`、`REFRESH-*`、`Session-Id` 与辅助 Cookie，并在 `account.proton.me` 同源环境获取 `/api/core/v4/keys/salts`。Worker 会核对 UID、邮箱和 KeySalt/用户密钥 ID，再用 `PROTON_SESSION_KEY` 加密保存到 Durable Object。
 
-管理页：`/proton/import`。默认使用扩展自动导入；高级故障排查区仅保留当前手工流程：普通 Session Cookie + 专用 REFRESH Cookie + KeySalt JSON。旧 Session JSON / 旧 REFRESH-* 兼容导入已移除。
+管理页：`/proton/import`。默认使用扩展自动导入；扩展会先预览本次 Bundle，可导出 JSON，用户确认后才上传。高级故障排查区仅保留普通 Session Cookie + 专用 REFRESH Cookie + KeySalt JSON。
 
 `x-pm-uid`、`x-pm-appversion`、`x-pm-apiversion` 等协议 Header 由客户端/Worker 自动生成，不属于需要手工导入的秘密凭证。
 

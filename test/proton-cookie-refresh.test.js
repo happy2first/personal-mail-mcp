@@ -100,10 +100,10 @@ test("management page requires dedicated refresh cookie and keeps explicit refre
   assert.match(session, /缺少 REFRESH-\* Cookie/);
   assert.match(session, /diagnostics: refreshDiagnostics/);
   assert.match(page, /id="sessionCookie"/);
-  assert.match(page, /专用 REFRESH Cookie（必填）/);
+  assert.match(page, /<span class="step">2<\/span>REFRESH Cookie/);
   assert.match(page, /if\(!refreshCookie\)throw new Error/);
   assert.match(page, /test-refresh/);
   assert.match(page, /import-key-salts/);
-  assert.match(page, /自动续期已验证/);
+  assert.match(page, /测试续期/);
   assert.doesNotMatch(page, /legacySession|importLegacy|高级兼容：旧 Session JSON/);
 });
