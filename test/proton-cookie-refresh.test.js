@@ -92,6 +92,8 @@ test("management page requires dedicated refresh cookie and keeps explicit refre
   const keySession = await read(keySessionUrl);
   const page = await read(pageUrl);
   assert.match(keySession, /import "\.\/cookie-refresh-session\.js"/);
+  assert.match(keySession, /action === "importKeySalts"/);
+  assert.doesNotMatch(keySession, /action === "importSession"/);
   assert.match(session, /action === "importCookieBundle"/);
   assert.match(session, /action === "testRefresh"/);
   assert.match(session, /refreshSucceeded: true/);
@@ -101,5 +103,7 @@ test("management page requires dedicated refresh cookie and keeps explicit refre
   assert.match(page, /专用 REFRESH Cookie（必填）/);
   assert.match(page, /if\(!refreshCookie\)throw new Error/);
   assert.match(page, /test-refresh/);
+  assert.match(page, /import-key-salts/);
   assert.match(page, /自动续期已验证/);
+  assert.doesNotMatch(page, /legacySession|importLegacy|高级兼容：旧 Session JSON/);
 });
