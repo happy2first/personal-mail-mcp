@@ -4,7 +4,7 @@ import {
   protonAuthStatus,
   protonCall,
   protonClearSession,
-  protonImportSession,
+  protonImportKeySalts,
   protonResetRisk,
   protonTestConnection,
 } from "./provider.js";
@@ -154,25 +154,16 @@ function pageHtml(csrf, nonce, actor) {
     <label for="sessionCookie" style="margin-top:14px"><span class="step">1</span>浏览器普通 Session Cookie（必填）</label>
     <textarea id="sessionCookie" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Cookie: AUTH-&lt;UID&gt;=...; Session-Id=...; ..."></textarea>
     <div class="notice">在 Proton Mail → DevTools → Network 中选择最新成功的 <code>/core/v4/addresses</code>，从 Request Headers 复制完整 <code>Cookie:</code>。手工模式会把 <code>AUTH-&lt;UID&gt;</code> 按 <code>/api/</code> 处理，并把 <code>Session-Id</code> 按父域 Cookie 处理。</div>
-    <div class="actions"><button id="importCookies" class="primary">校验并导入 Cookie Session</button><button id="clearCookies">清空 Cookie 输入</button></div>
 
     <label for="refreshCookie" style="margin-top:16px"><span class="step">2</span>专用 REFRESH Cookie（必填）</label>
     <div class="muted" style="margin:10px 0">从登录过程中 <code>/api/core/v4/auth/cookies</code> 的 Response Headers 复制 <code>Set-Cookie: REFRESH-&lt;UID&gt;=...</code>；其 Path 应覆盖 <code>/api/auth/refresh</code>。</div>
     <textarea id="refreshCookie" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="REFRESH-&lt;UID&gt;=... 或完整 Set-Cookie 行"></textarea>
-    </details>
-  </div>
+    <div class="actions"><button id="importCookies" class="primary">校验并导入 Cookie Session</button><button id="clearCookies">清空 Cookie 输入</button></div>
 
-  <div class="card">
-    <label for="keySalts"><span class="step">3</span>邮件解密材料 KeySalt（通常只需一次）</label>
+    <label for="keySalts" style="margin-top:16px"><span class="step">3</span>邮件解密材料 KeySalt</label>
+    <div class="muted" style="margin:10px 0">仅用于手工故障排查。正常使用浏览器扩展时，扩展会在 <code>account.proton.me</code> 同源环境自动获取 KeySalt，无需手工填写。</div>
     <textarea id="keySalts" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder='粘贴 GET /core/v4/keys/salts 的 Response JSON，例如 {"Code":1000,"KeySalts":[...]}'></textarea>
-    <div class="notice">KeySalt 用于本地解锁 Proton 私钥，不是短期 Session 凭证。若状态显示 KeySalt 已保存，可跳过此步。</div>
     <div class="actions"><button id="importKeySalts">导入 KeySalt</button><button id="clearKeySalts">清空 KeySalt 输入框</button></div>
-
-    <details>
-      <summary>高级兼容：旧 Session JSON / REFRESH-* Cookie 导入</summary>
-      <div class="muted" style="margin:10px 0">仅用于兼容旧流程。正常浏览器 Cookie Session 建议使用上面的必填 Cookie 输入。</div>
-      <textarea id="legacySession" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Session JSON 或旧 REFRESH-* Cookie"></textarea>
-      <div class="actions"><button id="importLegacy">兼容导入</button><button id="clearLegacy">清空</button></div>
     </details>
   </div>
 
@@ -222,10 +213,8 @@ $('testSession').onclick=()=>act(()=>call('${API}/validate',{method:'POST',body:
 $('testRefresh').onclick=()=>{if(confirm('将真实执行一次 Proton POST /auth/refresh，并保存服务器返回的新 REFRESH/AUTH/Session Cookie。继续？'))act(()=>call('${API}/test-refresh',{method:'POST',body:{account:$('account').value}}))};
 $('importCookies').onclick=()=>act(async()=>{const sessionCookie=$('sessionCookie').value.trim(),refreshCookie=$('refreshCookie').value.trim();if(!sessionCookie)throw new Error('请先粘贴浏览器 Session Cookie');if(!refreshCookie)throw new Error('请粘贴同一 UID 的 REFRESH Cookie');const data=await call('${API}/import-cookies',{method:'POST',body:{account:$('account').value,sessionCookie,refreshCookie}});$('sessionCookie').value='';$('refreshCookie').value='';return data});
 $('clearCookies').onclick=()=>{$('sessionCookie').value='';$('refreshCookie').value='';$('sessionCookie').focus()};
-$('importKeySalts').onclick=()=>act(async()=>{const input=$('keySalts').value.trim();if(!input)throw new Error('请先粘贴 keys/salts Response JSON');const data=await call('${API}/import',{method:'POST',body:{account:$('account').value,session:input}});$('keySalts').value='';return data});
+$('importKeySalts').onclick=()=>act(async()=>{const input=$('keySalts').value.trim();if(!input)throw new Error('请先粘贴 keys/salts Response JSON');let keySalts;try{const parsed=JSON.parse(input);keySalts=parsed?.KeySalts??parsed?.keySalts??parsed}catch{throw new Error('KeySalt JSON 无效')}const data=await call('${API}/import-key-salts',{method:'POST',body:{account:$('account').value,keySalts}});$('keySalts').value='';return data});
 $('clearKeySalts').onclick=()=>{$('keySalts').value='';$('keySalts').focus()};
-$('importLegacy').onclick=()=>act(async()=>{const input=$('legacySession').value.trim();if(!input)throw new Error('请先粘贴旧 Session JSON 或 REFRESH-* Cookie');const data=await call('${API}/import',{method:'POST',body:{account:$('account').value,session:input}});$('legacySession').value='';return data});
-$('clearLegacy').onclick=()=>{$('legacySession').value='';$('legacySession').focus()};
 $('clear').onclick=()=>{if(confirm('确认清除所选账号在 Worker 中保存的 Proton Session、Cookie 和随 Session 保存的解密材料？'))act(()=>call('${API}/clear',{method:'POST',body:{account:$('account').value}}))};
 $('resetRisk').onclick=()=>{if(confirm('只清除 Worker 本地 2028 密码登录保护锁？这不会解除 Proton 服务端限制。'))act(()=>call('${API}/reset-risk',{method:'POST',body:{account:$('account').value}}))};
 loadAccounts().catch(e=>{$('result').textContent=e.message});
@@ -296,9 +285,9 @@ export async function handleProtonImport(request, env, actor = {}) {
       }));
     }
     if (url.pathname === `${API}/test-refresh`) return json(await protonCall(env, cfg, "testRefresh"));
-    if (url.pathname === `${API}/import`) {
-      if (!body.session || !["string", "object"].includes(typeof body.session)) throw new Error("缺少 Session / Cookie / KeySalt 输入");
-      return json(await protonImportSession(env, cfg, body.session));
+    if (url.pathname === `${API}/import-key-salts`) {
+      if (!Array.isArray(body.keySalts) || !body.keySalts.length) throw new Error("缺少 KeySalt 列表");
+      return json(await protonImportKeySalts(env, cfg, body.keySalts));
     }
     if (url.pathname === `${API}/validate`) return json(await protonTestConnection(env, cfg));
     if (url.pathname === `${API}/clear`) return json(await protonClearSession(env, cfg));

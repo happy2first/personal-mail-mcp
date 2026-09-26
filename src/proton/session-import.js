@@ -15,23 +15,6 @@ function number(value) {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function decodeCookieValue(value) {
-  let raw = text(value);
-  if (!raw) return "";
-  if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) raw = raw.slice(1, -1);
-  for (let i = 0; i < 2; i += 1) {
-    if (!raw.includes("%")) break;
-    try {
-      const decoded = decodeURIComponent(raw);
-      if (decoded === raw) break;
-      raw = decoded;
-    } catch {
-      break;
-    }
-  }
-  return raw;
-}
-
 function cookiePairs(raw) {
   const input = String(raw || "").replace(/^cookie\s*:\s*/i, "").trim();
   if (!input || input.length > 64 * 1024) return [];
@@ -70,75 +53,22 @@ function parseBrowserCookieHeader(value) {
   };
 }
 
-function parseRefreshCookie(value) {
-  let cookieName = "";
-  let cookieValue = "";
-
-  if (object(value) && /^REFRESH-/i.test(text(value.name)) && value.value !== undefined) {
-    cookieName = text(value.name);
-    cookieValue = text(value.value);
-  } else if (typeof value === "string") {
-    let raw = value.trim();
-    raw = raw.replace(/^cookie\s*:\s*/i, "");
-    const full = raw.match(/(?:^|;\s*)(REFRESH-[^=;\s]+)=([^;]+)/i);
-    if (full) {
-      cookieName = full[1];
-      cookieValue = full[2];
-    } else {
-      cookieValue = raw;
-    }
-  } else {
-    return null;
-  }
-
-  const decoded = decodeCookieValue(cookieValue);
-  if (!decoded) return null;
-  let payload;
-  try { payload = JSON.parse(decoded); }
-  catch { return null; }
-  if (!object(payload) || !text(payload.UID ?? payload.uid) || !text(payload.RefreshToken ?? payload.refreshToken)) return null;
-
-  const UID = text(payload.UID ?? payload.uid);
-  if (cookieName) {
-    const suffixUid = cookieName.replace(/^REFRESH-/i, "");
-    if (suffixUid && suffixUid !== UID) throw new Error("REFRESH Cookie 名称中的 UID 与 Cookie 内容不一致");
-  }
-  return { input: payload, importMode: "browser_refresh_cookie" };
-}
-
 function parseImportedInput(value) {
   const browserCookie = parseBrowserCookieHeader(value);
   if (browserCookie) return browserCookie;
 
-  const refreshCookie = parseRefreshCookie(value);
-  if (refreshCookie) return refreshCookie;
-
-  let current = value;
-  if (typeof current === "string") {
-    const raw = current.trim();
-    if (!raw) throw new Error("Session / Cookie 输入为空");
-    try { current = JSON.parse(raw); }
-    catch { throw new Error("输入既不是有效 Session JSON，也不是可识别的 Proton Cookie 请求头"); }
-  }
-  current = object(current);
-  if (!current) throw new Error("Session 数据必须是 JSON 对象，或浏览器 Proton Cookie 请求头");
-
-  if (/^REFRESH-/i.test(text(current.name)) && current.value !== undefined) {
-    const parsed = parseRefreshCookie(current);
-    if (parsed) return parsed;
+  if (typeof value === "string") {
+    throw new Error("仅支持浏览器 Cookie 请求头；旧 Session JSON / REFRESH Cookie 导入已移除");
   }
 
-  for (const key of ["AuthResponse", "auth", "session", "data", "result", "response"]) {
-    if (object(current[key]) && (current[key].UID || current[key].AccessToken || current[key].RefreshToken || current[key].cookies)) {
-      current = current[key];
-      break;
-    }
-  }
+  const current = object(value);
+  if (!current) throw new Error("Session 数据必须是内部认证对象或浏览器 Proton Cookie 请求头");
+
   const hasAccess = Boolean(text(current.AccessToken ?? current.accessToken));
   const cookieAuth = current.cookies === true || current.cookieAuth === true;
   return {
     input: current,
-    importMode: cookieAuth ? "browser_cookie_session" : (hasAccess ? "token_json" : "refresh_token_json"),
+    importMode: cookieAuth ? "browser_cookie_session" : (hasAccess ? "token_session" : "refresh_token_session"),
     cookiePairs: Array.isArray(current.CookieState) ? current.CookieState : null,
   };
 }

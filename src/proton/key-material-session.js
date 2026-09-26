@@ -26,7 +26,7 @@ ProtonSession.prototype.fetch = async function fetchWithKeySaltImport(request) {
     const parsed = await request.clone().json().catch(() => null);
     const account = String(parsed?.account || "").trim();
     const action = String(parsed?.action || "").trim();
-    const salts = action === "importSession" ? normalizeKeySalts(parsed?.payload?.session) : null;
+    const salts = action === "importKeySalts" ? normalizeKeySalts({ KeySalts: parsed?.payload?.keySalts }) : null;
     if (account && salts?.length) {
       try {
         const client = this.getClient(account);

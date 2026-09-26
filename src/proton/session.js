@@ -373,21 +373,6 @@ export class ProtonSession {
       } else if (action === "resetRisk") {
         await this.state.storage.delete(RISK_KEY);
         data = { success: true, account, riskReset: true };
-      } else if (action === "importSession") {
-        if (!hasSessionEncryption(this.env)) throw new Error("未配置 PROTON_SESSION_KEY，禁止导入 Session");
-        const validated = await validateImportedSession(client.cfg, this.env, payload.session);
-        client.setAuth(validated.auth);
-        if (validated.cookies?.length) client.setCookieState(validated.cookies);
-        await this.persistClient(client);
-        await this.state.storage.delete(HUMAN_VERIFY_KEY);
-        await this.patchAuthState({ reauthRequired: false, twoFactorPending: false });
-        await this.writeSessionMeta(client, {
-          source: "manual_import",
-          importedAt: now(),
-          lastValidatedAt: now(),
-          refreshedDuringValidation: Boolean(validated.safe.refreshedDuringValidation),
-        });
-        data = { success: true, imported: true, ...validated.safe };
       } else if (action === "validateSession") {
         if (!client.auth?.UID || !client.auth?.RefreshToken) throw new Error("当前账号没有可校验的持久 Session");
         const validated = await validateImportedSession(client.cfg, this.env, client.auth);

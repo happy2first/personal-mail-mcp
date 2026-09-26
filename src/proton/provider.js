@@ -103,6 +103,6 @@ export const protonAuthStatus = (env, cfg) => protonCall(env, cfg, "authStatus")
 export const protonReauthorize = (env, cfg) => protonCall(env, cfg, "reauthorize");
 export const protonSubmit2FA = (env, cfg, code) => protonCall(env, cfg, "submit2fa", { code });
 export const protonResetRisk = (env, cfg) => protonCall(env, cfg, "resetRisk");
-export const protonImportSession = (env, cfg, session) => protonCall(env, cfg, "importSession", { session });
+export const protonImportKeySalts = (env, cfg, keySalts) => protonCall(env, cfg, "importKeySalts", { keySalts });
 export const protonValidateSession = (env, cfg) => protonCall(env, cfg, "validateSession");
 export const protonClearSession = (env, cfg) => protonCall(env, cfg, "clearSession");

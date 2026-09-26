@@ -87,6 +87,8 @@ test("extension routes are Access/CSRF protected and loaded into the Durable Obj
   assert.match(page, /meta name="proton-extension-csrf"/);
   assert.match(page, /extension-pair/);
   assert.match(page, /extension-import/);
+  assert.match(page, /import-key-salts/);
+  assert.doesNotMatch(page, /legacySession|importLegacy|\/api\/import["']/);
   assert.match(page, /actorIdentity\(actor\)/);
   assert.match(session, /action === "extensionPair"/);
   assert.match(session, /action === "extensionImport"/);
