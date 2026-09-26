@@ -1,6 +1,11 @@
 import "./cookie-refresh.js";
 import { ProtonSession } from "./session.js";
-import { countRefreshCookies, validateCookieBundle } from "./cookie-bundle.js";
+import {
+  countAuthCookies,
+  countRefreshCookies,
+  countSessionIdCookies,
+  validateCookieBundle,
+} from "./cookie-bundle.js";
 
 const text = (value) => value === undefined || value === null ? "" : String(value).trim();
 
@@ -57,18 +62,25 @@ ProtonSession.prototype.authStatus = async function authStatusWithCookieRefresh(
   const status = await originalAuthStatus.call(this, client);
   const meta = await this.readSessionMeta();
   const cookieAuth = Boolean(client.auth?.cookies);
-  const refreshCookieCount = countRefreshCookies(client.getCookieState());
+  const cookieState = client.getCookieState();
+  const refreshCookieCount = countRefreshCookies(cookieState);
+  const authCookieCount = countAuthCookies(cookieState, client.auth?.UID);
+  const sessionIdCookieCount = countSessionIdCookies(cookieState);
   const normalCount = normalCookieCount(client);
-  const refreshCapable = cookieAuth && refreshCookieCount > 0;
+  const refreshCapable = cookieAuth && refreshCookieCount > 0 && authCookieCount > 0 && sessionIdCookieCount > 0;
   const refreshVerified = refreshCapable && meta?.lastRefreshResult === "success";
   status.transport = {
     ...(status.transport || {}),
     normalCookieCount: normalCount,
+    authCookieCount,
+    sessionIdCookieCount,
     refreshCookieCount,
   };
   if (status.session) {
     status.session.refreshCapable = refreshCapable;
     status.session.refreshVerified = refreshVerified;
+    status.session.authCookieCount = authCookieCount;
+    status.session.sessionIdCookieCount = sessionIdCookieCount;
     status.session.refreshCookieCount = refreshCookieCount;
     status.session.normalCookieCount = normalCount;
   }
@@ -76,6 +88,8 @@ ProtonSession.prototype.authStatus = async function authStatusWithCookieRefresh(
     capable: refreshCapable,
     verified: refreshVerified,
     cookieCount: refreshCookieCount,
+    authCookieCount,
+    sessionIdCookieCount,
     lastAttemptAt: meta?.lastRefreshAt || null,
     lastResult: meta?.lastRefreshResult || null,
     cookiesUpdated: Boolean(meta?.lastRefreshCookiesUpdated),
@@ -176,8 +190,13 @@ ProtonSession.prototype.fetch = async function fetchWithCookieRefreshActions(req
       await this.hydrate(client);
       try {
         if (!client.auth?.UID || !client.auth?.cookies) throw new Error("当前账号没有 Cookie Session，请先导入浏览器 Session Cookie");
-        const refreshCookieCount = countRefreshCookies(client.getCookieState());
-        if (!refreshCookieCount) throw new Error("当前 Cookie Session 没有可发送到 /api/auth/refresh 的 AUTH-* Cookie，无法测试自动续期");
+        const cookieState = client.getCookieState();
+        const refreshCookieCount = countRefreshCookies(cookieState);
+        const authCookieCount = countAuthCookies(cookieState, client.auth?.UID);
+        const sessionIdCookieCount = countSessionIdCookies(cookieState);
+        if (!refreshCookieCount) throw new Error("当前 Cookie Session 缺少 REFRESH-* Cookie，无法测试自动续期");
+        if (!authCookieCount) throw new Error("当前 Cookie Session 缺少当前 UID 的 AUTH Cookie，无法测试自动续期");
+        if (!sessionIdCookieCount) throw new Error("当前 Cookie Session 缺少 Session-Id Cookie，无法测试自动续期");
         const before = JSON.stringify(client.getCookieState());
         await client.refreshAuthenticated();
         const addressCount = await validateCurrentAddress(client);
