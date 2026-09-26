@@ -11,28 +11,6 @@ const clientUrl = new URL("../src/proton/client-v2.js", import.meta.url);
 
 const read = (url) => readFile(url, "utf8");
 
-test("manual Session import requires UID and verifies account ownership", async () => {
-  const text = await read(importUrl);
-  assert.match(text, /Session 缺少 UID/);
-  assert.match(text, /Session 缺少 RefreshToken/);
-  assert.match(text, /\/core\/v4\/addresses/);
-  assert.match(text, /sessionAccountMismatch = true/);
-  assert.match(text, /refreshAuthenticated\(\)/);
-});
-
-test("browser REFRESH cookie can bootstrap a Session without an AccessToken", () => {
-  const cookieValue = encodeURIComponent(JSON.stringify({
-    ResponseType: "token",
-    GrantType: "refresh_token",
-    UID: "uid-demo",
-    RefreshToken: "refresh-demo",
-  }));
-  const session = normalizeImportedSession(`REFRESH-uid-demo=${cookieValue}`);
-  assert.equal(session.UID, "uid-demo");
-  assert.equal(session.RefreshToken, "refresh-demo");
-  assert.equal(session.AccessToken, undefined);
-});
-
 test("browser Cookie request header bootstraps cookie-auth from AUTH-UID", () => {
   const session = normalizeImportedSession("Cookie: AUTH-uid-demo=secret-auth; Session-Id=session-id; st=token");
   assert.equal(session.UID, "uid-demo");
@@ -42,19 +20,38 @@ test("browser Cookie request header bootstraps cookie-auth from AUTH-UID", () =>
   assert.equal(session.CookieState.find((x) => x.name === "AUTH-uid-demo")?.value, "secret-auth");
 });
 
-test("REFRESH cookie name UID must match its encoded UID", () => {
-  const cookieValue = encodeURIComponent(JSON.stringify({ UID: "uid-a", RefreshToken: "refresh-demo" }));
+test("internal normalized auth objects remain valid for restore/validation", () => {
+  const token = normalizeImportedSession({ UID:"uid-demo", RefreshToken:"refresh-demo", AccessToken:"access-demo" });
+  assert.equal(token.UID, "uid-demo");
+  assert.equal(token.RefreshToken, "refresh-demo");
+  assert.equal(token.AccessToken, "access-demo");
+
+  const cookie = normalizeImportedSession({
+    UID:"uid-cookie",
+    RefreshToken:"__BROWSER_COOKIE_SESSION__",
+    cookies:true,
+    CookieState:[{name:"AUTH-uid-cookie",value:"secret-auth"}],
+  });
+  assert.equal(cookie.cookies, true);
+  assert.equal(cookie.UID, "uid-cookie");
+});
+
+test("legacy Session JSON strings and standalone REFRESH cookies are rejected", () => {
   assert.throws(
-    () => normalizeImportedSession(`REFRESH-uid-b=${cookieValue}`),
-    /UID 与 Cookie 内容不一致/,
+    () => normalizeImportedSession(JSON.stringify({ UID:"uid-demo", RefreshToken:"refresh-demo" })),
+    /旧 Session JSON \/ REFRESH Cookie 导入已移除/,
+  );
+  const refresh = encodeURIComponent(JSON.stringify({ UID:"uid-demo", RefreshToken:"refresh-demo" }));
+  assert.throws(
+    () => normalizeImportedSession(`REFRESH-uid-demo=${refresh}`),
+    /旧 Session JSON \/ REFRESH Cookie 导入已移除/,
   );
 });
 
-test("Session import is atomic and local 2028 risk only gates password reauthorize", async () => {
+test("legacy Session import action is removed and local 2028 risk only gates password reauthorize", async () => {
   const text = await read(sessionUrl);
-  assert.match(text, /validateImportedSession\(client\.cfg, this\.env, payload\.session\)/);
-  assert.match(text, /client\.setAuth\(validated\.auth\)/);
-  assert.match(text, /source: "manual_import"/);
+  assert.doesNotMatch(text, /action === "importSession"/);
+  assert.doesNotMatch(text, /source: "manual_import"/);
   assert.match(text, /scope: "password_reauthorize_only"/);
   assert.match(text, /action === "reauthorize"\) \{\s*await this\.assertRiskCircuitClosed\(\)/s);
   const runStart = text.indexOf("async runClientAction");
