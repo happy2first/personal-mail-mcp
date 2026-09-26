@@ -154,11 +154,11 @@ function pageHtml(csrf, nonce, actor) {
     <label for="sessionCookie" style="margin-top:14px"><span class="step">1</span>浏览器普通 Session Cookie（必填）</label>
     <textarea id="sessionCookie" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Cookie: AUTH-&lt;UID&gt;=...; Session-Id=...; ..."></textarea>
     <div class="notice">在 Proton Mail → DevTools → Network 中选择最新成功的 <code>/core/v4/addresses</code>，从 Request Headers 复制完整 <code>Cookie:</code>。手工模式会把 <code>AUTH-&lt;UID&gt;</code> 按 <code>/api/</code> 处理，并把 <code>Session-Id</code> 按父域 Cookie 处理。</div>
-    <div class="actions"><button id="importCookies" class="primary">校验并导入 Cookie Session</button><button id="clearCookies">清空 Cookie 输入</button></div>
 
     <label for="refreshCookie" style="margin-top:16px"><span class="step">2</span>专用 REFRESH Cookie（必填）</label>
     <div class="muted" style="margin:10px 0">从登录过程中 <code>/api/core/v4/auth/cookies</code> 的 Response Headers 复制 <code>Set-Cookie: REFRESH-&lt;UID&gt;=...</code>；其 Path 应覆盖 <code>/api/auth/refresh</code>。</div>
     <textarea id="refreshCookie" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="REFRESH-&lt;UID&gt;=... 或完整 Set-Cookie 行"></textarea>
+    <div class="actions"><button id="importCookies" class="primary">校验并导入 Cookie Session</button><button id="clearCookies">清空 Cookie 输入</button></div>
 
     <label for="keySalts" style="margin-top:16px"><span class="step">3</span>邮件解密材料 KeySalt</label>
     <div class="muted" style="margin:10px 0">仅用于手工故障排查。正常使用浏览器扩展时，扩展会在 <code>account.proton.me</code> 同源环境自动获取 KeySalt，无需手工填写。</div>
