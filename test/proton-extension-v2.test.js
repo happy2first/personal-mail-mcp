@@ -27,7 +27,7 @@ function cookie(name, value, domain, path, hostOnly = true) {
   return { name, value, domain, path, hostOnly, secure: true, httpOnly: true, sameSite: "strict", session: false };
 }
 
-test("extension bundle v2 preserves structured AUTH/REFRESH/Session-Id cookies", () => {
+test("extension bundle v3 preserves structured AUTH/REFRESH/Session-Id cookies", () => {
   const uid = "uid_demo";
   const bundle = normalizeExtensionBundle({
     version: EXTENSION_BUNDLE_VERSION,
@@ -37,7 +37,8 @@ test("extension bundle v2 preserves structured AUTH/REFRESH/Session-Id cookies",
     email: "demo@proton.me",
     user: { id: "user-id", keyIds: ["key-1"], passwordMode: 1 },
     addresses: [{ id: "address-id", email: "demo@proton.me" }],
-    keySalts: [{ id: "key-1", keySalt: "salt-value" }, { id: "key-2", keySalt: null }],
+    keyPassword: "derived-key-password",
+    keySalts: [],
     session: {
       cookies: [
         cookie(`AUTH-${uid}`, "auth-value", "mail.proton.me", "/api/"),
@@ -49,26 +50,28 @@ test("extension bundle v2 preserves structured AUTH/REFRESH/Session-Id cookies",
     client: { mailAppVersion: "web-mail@test", accountAppVersion: "web-account@test", locale: "en_US" },
   });
 
-  assert.equal(bundle.version, 2);
+  assert.equal(bundle.version, 3);
   assert.equal(bundle.uid, uid);
-  assert.equal(bundle.keySalts.length, 1);
+  assert.equal(bundle.keyPassword, "derived-key-password");
+  assert.equal(bundle.keySalts.length, 0);
+  assert.equal(bundle.keyMaterialSource, "browser-key-password");
   assert.equal(bundle.cookies.find((x) => x.name === `AUTH-${uid}`)?.path, "/api/");
   assert.equal(bundle.cookies.find((x) => x.name === `REFRESH-${uid}`)?.path, "/api/auth/refresh");
   assert.equal(bundle.cookies.find((x) => x.name === "Session-Id")?.domain, "proton.me");
   assert.equal(bundle.cookies.find((x) => x.name === "Session-Id")?.hostOnly, false);
 });
 
-test("extension bundle v2 rejects missing refresh, missing Session-Id and UID mismatch", () => {
+test("extension bundle v3 rejects missing refresh, missing Session-Id and UID mismatch", () => {
   const uid = "uid_demo";
   const base = {
-    version: 2,
+    version: 3,
     source: EXTENSION_BUNDLE_SOURCE,
     capturedAt: Date.now(),
     uid,
     email: "demo@proton.me",
     user: { id: "user-id", keyIds: ["key-1"] },
     addresses: [{ id: "address-id", email: "demo@proton.me" }],
-    keySalts: [{ id: "key-1", keySalt: "salt-value" }],
+    keyPassword: "derived-key-password",
   };
   const auth = cookie(`AUTH-${uid}`, "auth-value", "mail.proton.me", "/api/");
   const session = cookie("Session-Id", "session-value", ".proton.me", "/", false);
@@ -92,7 +95,36 @@ test("extension routes are Access/CSRF protected and loaded into the Durable Obj
   assert.match(page, /actorIdentity\(actor\)/);
   assert.match(session, /action === "extensionPair"/);
   assert.match(session, /action === "extensionImport"/);
-  assert.match(session, /source: "extension_bundle_v2"/);
+  assert.match(session, /source: "extension_bundle_v3"/);
+  assert.match(session, /KeyPassword: bundle\.keyPassword/);
+  assert.match(session, /candidate\.ensureKeys\(\)/);
+  assert.match(session, /decryptionVerified/);
   assert.match(session, /refreshTestRequired: true/);
   assert.doesNotMatch(session, /refreshAuthenticated\(\)/);
+});
+
+
+test("extension bundle v3 still accepts KeySalt fallback when browser keyPassword is unavailable", () => {
+  const uid = "uid_fallback";
+  const bundle = normalizeExtensionBundle({
+    version: EXTENSION_BUNDLE_VERSION,
+    source: EXTENSION_BUNDLE_SOURCE,
+    capturedAt: Date.now(),
+    uid,
+    email: "fallback@proton.me",
+    user: { id: "user-fallback", keyIds: ["key-fallback"] },
+    addresses: [{ id: "address-fallback", email: "fallback@proton.me" }],
+    keySalts: [{ id: "key-fallback", keySalt: "salt-fallback" }],
+    session: {
+      cookies: [
+        cookie(`AUTH-${uid}`, "auth-value", "mail.proton.me", "/api/"),
+        cookie(`REFRESH-${uid}`, refreshValue(uid), "mail.proton.me", "/api/auth/refresh"),
+        cookie("Session-Id", "session-value", ".proton.me", "/", false),
+      ],
+    },
+  });
+  assert.equal(bundle.version, 3);
+  assert.equal(bundle.keyPassword, "");
+  assert.equal(bundle.keySalts.length, 1);
+  assert.equal(bundle.keyMaterialSource, "key-salt");
 });

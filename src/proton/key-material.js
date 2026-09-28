@@ -73,48 +73,61 @@ ProtonClient.prototype.ensureKeys = async function ensureKeysWithImportedSalt() 
   this.user = userPayload.User;
   this.addresses = list(addressesPayload.Addresses);
 
-  let salts = normalizeKeySalts({ KeySalts: this.auth?.KeySalts });
-  if (!salts) {
-    try {
-      const saltsPayload = await this.request("/core/v4/keys/salts");
-      salts = normalizeKeySalts(saltsPayload);
-      if (salts) this.auth = { ...this.auth, KeySalts: salts };
-    } catch (error) {
-      if (Number(error?.protonCode) === 9101) {
-        error.keySaltsRequired = true;
-        error.message = `${error.message}；当前 Cookie Session 无法读取 KeySalt。请在 /proton/import 粘贴浏览器 GET /core/v4/keys/salts 的 Response JSON 后再次测试正文`;
-      }
-      throw error;
-    }
-  }
-  if (!salts?.length) {
-    const error = new Error("Proton 缺少 KeySalt；请在 /proton/import 导入浏览器 keys/salts Response JSON");
-    error.keySaltsRequired = true;
-    throw error;
-  }
-
   const userApiKeys = list(this.user?.Keys).filter((item) => bool(item.Active));
   const primary = userApiKeys.find((item) => bool(item.Primary)) || userApiKeys[0];
-  const salt = salts.find((item) => String(item.ID) === String(primary?.ID));
-  if (!primary?.PrivateKey || !salt?.KeySalt) {
-    const error = new Error("导入的 Proton KeySalt 与当前用户主密钥不匹配，请重新从同一账号浏览器会话导入 keys/salts Response");
-    error.keySaltsRequired = true;
-    throw error;
+  if (!primary?.PrivateKey) throw new Error("Proton 用户主密钥缺失");
+
+  const importedKeyPass = typeof this.auth?.KeyPassword === "string"
+    ? this.auth.KeyPassword.trim()
+    : "";
+  let keyPass = importedKeyPass;
+
+  if (!keyPass) {
+    let salts = normalizeKeySalts({ KeySalts: this.auth?.KeySalts });
+    if (!salts) {
+      try {
+        const saltsPayload = await this.request("/core/v4/keys/salts");
+        salts = normalizeKeySalts(saltsPayload);
+        if (salts) this.auth = { ...this.auth, KeySalts: salts };
+      } catch (error) {
+        if (Number(error?.protonCode) === 9101) {
+          error.keySaltsRequired = true;
+          error.message = `${error.message}；当前 Cookie Session 无法读取 KeySalt。请重新用浏览器扩展导入解密材料，或在 /proton/import 手工导入 KeySalt`;
+        }
+        throw error;
+      }
+    }
+    if (!salts?.length) {
+      const error = new Error("Proton 缺少解密材料；请重新用浏览器扩展导入，或手工导入 KeySalt");
+      error.keySaltsRequired = true;
+      throw error;
+    }
+
+    const salt = salts.find((item) => String(item.ID) === String(primary.ID));
+    if (!salt?.KeySalt) {
+      const error = new Error("导入的 Proton KeySalt 与当前用户主密钥不匹配");
+      error.keySaltsRequired = true;
+      throw error;
+    }
+
+    const mailboxPassword = Number(this.auth?.PasswordMode || 1) === 2 ? this.cfg.mailboxPassword : this.cfg.credential;
+    if (!mailboxPassword) {
+      const error = new Error("该 Proton 账号使用双密码模式，需要配置 MAIL_<ACCOUNT>_MAILBOX_PASSWORD");
+      error.mailboxPasswordRequired = true;
+      throw error;
+    }
+    keyPass = await computeKeyPassword(mailboxPassword, salt.KeySalt);
   }
 
-  const mailboxPassword = Number(this.auth?.PasswordMode || 1) === 2 ? this.cfg.mailboxPassword : this.cfg.credential;
-  if (!mailboxPassword) {
-    const error = new Error("该 Proton 账号使用双密码模式，需要配置 MAIL_<ACCOUNT>_MAILBOX_PASSWORD");
-    error.mailboxPasswordRequired = true;
-    throw error;
-  }
-  const keyPass = await computeKeyPassword(mailboxPassword, salt.KeySalt);
   const userKeys = [];
   for (const key of userApiKeys) {
     try { userKeys.push(await unlockPrivateKey(key.PrivateKey, keyPass)); }
     catch (error) { console.warn(`Proton user key ${key.ID} unlock failed:`, error?.message || String(error)); }
   }
-  if (!userKeys.length) throw new Error("无法解锁 Proton 用户密钥；请确认 Worker 中的 Proton 密码与当前账号一致");
+  if (!userKeys.length) {
+    if (importedKeyPass) throw new Error("浏览器导入的 Proton 解密密钥无法解锁当前用户密钥，请重新导入浏览器会话");
+    throw new Error("无法解锁 Proton 用户密钥；请确认 Worker 中的 Proton 密码与当前账号一致");
+  }
   this.userKeys = userKeys;
 
   const addressKeys = new Map();

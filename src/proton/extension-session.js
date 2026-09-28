@@ -3,7 +3,7 @@ import { ProtonClient } from "./client-v2.js";
 import { ProtonSession } from "./session.js";
 import { normalizeExtensionBundle } from "./extension-policy.js";
 
-const PAIR_KEY = "proton:extensionPair:v2";
+const PAIR_KEY = "proton:extensionPair:v3";
 const EVENT_CURSOR_KEY = "proton:eventCursor:v1";
 const HUMAN_VERIFY_KEY = "proton:humanVerification:v1";
 const COOKIE_SESSION_MARKER = "__BROWSER_COOKIE_SESSION__";
@@ -42,7 +42,8 @@ async function validateExtensionCandidate(cfg, env, bundle) {
     UID: bundle.uid,
     RefreshToken: COOKIE_SESSION_MARKER,
     cookies: true,
-    KeySalts: bundle.keySalts,
+    ...(bundle.keyPassword ? { KeyPassword: bundle.keyPassword } : {}),
+    ...(bundle.keySalts?.length ? { KeySalts: bundle.keySalts } : {}),
     ...(bundle.user.passwordMode ? { PasswordMode: bundle.user.passwordMode } : {}),
   });
   candidate.setCookieState(bundle.cookies);
@@ -65,7 +66,16 @@ async function validateExtensionCandidate(cfg, env, bundle) {
     throw error;
   }
   const activeIds = new Set(activeUserKeyIds(userPayload));
-  if (!bundle.keySalts.some((item) => activeIds.has(item.ID))) {
+  if (bundle.keyPassword) {
+    try {
+      await candidate.ensureKeys();
+    } catch (cause) {
+      const error = new Error("扩展导入的浏览器解密材料无法解锁当前 Proton 用户密钥");
+      error.sessionAccountMismatch = true;
+      error.cause = cause;
+      throw error;
+    }
+  } else if (!bundle.keySalts.some((item) => activeIds.has(item.ID))) {
     const error = new Error("扩展 Bundle KeySalt 与当前 Proton 用户主密钥不匹配");
     error.sessionAccountMismatch = true;
     throw error;
@@ -75,6 +85,7 @@ async function validateExtensionCandidate(cfg, env, bundle) {
     cookies: candidate.getCookieState(),
     addressCount: emails.length,
     activeKeyCount: activeIds.size,
+    decryptionVerified: Boolean(bundle.keyPassword),
   };
 }
 
@@ -147,7 +158,8 @@ ProtonSession.prototype.fetch = async function fetchWithExtensionBundle(request)
         const validated = await validateExtensionCandidate(client.cfg, this.env, bundle);
         client.setAuth({
           ...validated.auth,
-          KeySalts: bundle.keySalts,
+          ...(bundle.keyPassword ? { KeyPassword: bundle.keyPassword } : {}),
+          ...(bundle.keySalts?.length ? { KeySalts: bundle.keySalts } : {}),
           ...(bundle.user.passwordMode ? { PasswordMode: bundle.user.passwordMode } : {}),
         });
         client.setCookieState(validated.cookies);
@@ -156,12 +168,14 @@ ProtonSession.prototype.fetch = async function fetchWithExtensionBundle(request)
         await this.state.storage.delete(HUMAN_VERIFY_KEY);
         await this.patchAuthState({ reauthRequired: false, twoFactorPending: false });
         await this.writeSessionMeta(client, {
-          source: "extension_bundle_v2",
+          source: "extension_bundle_v3",
           importedAt: Date.now(),
           lastValidatedAt: Date.now(),
           refreshedDuringValidation: false,
-          keySaltsImportedAt: Date.now(),
+          keyMaterialImportedAt: Date.now(),
+          keyMaterialSource: bundle.keyMaterialSource,
           keySaltCount: bundle.keySalts.length,
+          browserKeyPasswordImported: Boolean(bundle.keyPassword),
           extensionBundleVersion: bundle.version,
           extensionClient: bundle.client || null,
         });
@@ -172,11 +186,13 @@ ProtonSession.prototype.fetch = async function fetchWithExtensionBundle(request)
             success: true,
             imported: true,
             account,
-            importMode: "extension_bundle_v2",
+            importMode: "extension_bundle_v3",
             bundleVersion: bundle.version,
             cookieAuth: true,
             addressCount: validated.addressCount,
             keySaltCount: bundle.keySalts.length,
+            keyMaterialSource: bundle.keyMaterialSource,
+            decryptionVerified: validated.decryptionVerified,
             activeKeyCount: validated.activeKeyCount,
             refreshTestRequired: true,
           },

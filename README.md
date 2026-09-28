@@ -46,7 +46,7 @@ QQ/163/Gmail/custom 使用 IMAP/SMTP 授权码或应用专用密码；Proton 直
 | `qq` | `imap.qq.com:993` TLS | `smtp.qq.com:465` TLS | QQ 邮箱授权码 |
 | `163` | `imap.163.com:993` TLS | `smtp.163.com:465` TLS | 163 邮箱客户端授权码 |
 | `gmail` | `imap.gmail.com:993` TLS | `smtp.gmail.com:465` TLS | Google App Password |
-| `proton` | Proton Web API | Proton Web API | Browser Session Bundle + Worker 中的 Proton/邮箱解密密码 |
+| `proton` | Proton Web API | Proton Web API | Browser Session Bundle；扩展可直接导入浏览器派生解密密钥 |
 | `custom` | 自定义 | 自定义 | 邮箱服务商提供的 IMAP/SMTP 凭证 |
 
 163 邮箱连接时会发送 IMAP `ID` 命令，以兼容网易邮箱的客户端识别要求。
@@ -166,15 +166,15 @@ MAIL_PROTONE_EMAIL=your-address@proton.me
 MAIL_PROTONE_CREDENTIAL=your-proton-password
 ```
 
-双密码模式可额外配置：
+如果不使用扩展导入浏览器派生解密密钥，双密码模式可额外配置：
 
 ```text
 MAIL_PROTONE_MAILBOX_PASSWORD=your-mailbox-password
 ```
 
-浏览器会话不通过密码登录导入。推荐使用 `protonmail-chrome-extension` 生成 **Proton Browser Session Bundle v2**：扩展读取同一 UID 的结构化 `AUTH-*`、`REFRESH-*`、`Session-Id` 与辅助 Cookie，并在 `account.proton.me` 同源环境获取 `/api/core/v4/keys/salts`。Worker 会核对 UID、邮箱和 KeySalt/用户密钥 ID，再用 `PROTON_SESSION_KEY` 加密保存到 Durable Object。
+浏览器会话不通过密码登录导入。推荐使用 `protonmail-chrome-extension` 生成 **Proton Browser Session Bundle v3**：扩展读取同一 UID 的结构化 `AUTH-*`、`REFRESH-*`、`Session-Id` 与辅助 Cookie，并从当前 Proton Mail 的加密持久会话中恢复 Proton 已派生的 `keyPassword`。扩展不会读取用户原始登录密码；Worker 会验证该解密材料确实能解锁当前 Proton 用户密钥，再用 `PROTON_SESSION_KEY` 加密保存到 Durable Object。
 
-管理页：`/proton/import`。默认使用扩展自动导入；扩展会先预览本次 Bundle，可导出 JSON，用户确认后才上传。高级故障排查区仅保留普通 Session Cookie + 专用 REFRESH Cookie + KeySalt JSON。
+管理页：`/proton/import`。默认使用扩展自动导入；扩展会先预览本次 Bundle，用户确认后才上传。预览/导出的 JSON 会主动排除 `keyPassword`；高级故障排查区仍保留普通 Session Cookie + 专用 REFRESH Cookie + KeySalt JSON。
 
 `x-pm-uid`、`x-pm-appversion`、`x-pm-apiversion` 等协议 Header 由客户端/Worker 自动生成，不属于需要手工导入的秘密凭证。
 
