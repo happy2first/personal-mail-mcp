@@ -10,13 +10,20 @@ ProtonSession.prototype.authStatus = async function authStatusWithKeyMaterial(cl
   const status = await originalAuthStatus.call(this, client);
   const cookieAuth = Boolean(client.auth?.cookies);
   const keySaltCount = normalizeKeySalts({ KeySalts: client.auth?.KeySalts })?.length || 0;
+  const browserKeyPassword = typeof client.auth?.KeyPassword === "string" && client.auth.KeyPassword.length > 0;
   status.hasSession = Boolean(client.auth?.UID && (cookieAuth || client.auth?.RefreshToken));
   if (status.session) {
     status.session.cookieAuth = cookieAuth;
     status.session.hasRefreshToken = !cookieAuth && Boolean(client.auth?.RefreshToken);
     status.session.keySaltCount = keySaltCount;
+    status.session.browserKeyPassword = browserKeyPassword;
   }
-  status.keyMaterial = { keySaltCount, imported: keySaltCount > 0 };
+  status.keyMaterial = {
+    keySaltCount,
+    browserKeyPassword,
+    source: browserKeyPassword ? "browser-key-password" : (keySaltCount > 0 ? "key-salt" : null),
+    imported: browserKeyPassword || keySaltCount > 0,
+  };
   return status;
 };
 
