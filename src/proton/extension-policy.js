@@ -1,6 +1,6 @@
 import { normalizeCookieState } from "./cookies.js";
 
-export const EXTENSION_BUNDLE_VERSION = 2;
+export const EXTENSION_BUNDLE_VERSION = 3;
 export const EXTENSION_BUNDLE_SOURCE = "proton-browser-session";
 export const PROTON_REFRESH_PATH = "/api/auth/refresh";
 export const PROTON_API_PATH = "/api/";
@@ -37,6 +37,13 @@ function decodeRefreshPayload(value) {
   } catch {
     return null;
   }
+}
+
+function normalizeKeyPassword(value) {
+  if (typeof value !== "string") return "";
+  const out = value.trim();
+  if (!out || out.length > 8192) return "";
+  return out;
 }
 
 function normalizeKeySalts(rows) {
@@ -144,10 +151,13 @@ export function normalizeExtensionBundle(bundle, nowMs = Date.now()) {
   const addresses = normalizeAddresses(bundle.addresses);
   if (!addresses.some((item) => item.Email === email)) throw new Error("扩展 Bundle 邮箱与地址列表不一致");
 
+  const keyPassword = normalizeKeyPassword(bundle.keyPassword);
   const keySalts = normalizeKeySalts(bundle.keySalts);
-  if (!keySalts.length) throw new Error("扩展 Bundle 缺少有效 KeySalt");
-  const keyIdSet = new Set(keyIds);
-  if (!keySalts.some((item) => keyIdSet.has(item.ID))) throw new Error("扩展 Bundle KeySalt 与用户密钥不匹配");
+  if (!keyPassword && !keySalts.length) throw new Error("扩展 Bundle 缺少 Proton 解密材料");
+  if (!keyPassword) {
+    const keyIdSet = new Set(keyIds);
+    if (!keySalts.some((item) => keyIdSet.has(item.ID))) throw new Error("扩展 Bundle KeySalt 与用户密钥不匹配");
+  }
 
   const cookieRows = Array.isArray(bundle.session?.cookies) ? bundle.session.cookies : bundle.cookies;
   const cookies = normalizeExtensionCookies(cookieRows, uid, nowMs);
@@ -160,7 +170,9 @@ export function normalizeExtensionBundle(bundle, nowMs = Date.now()) {
     email,
     user: { id: userId, keyIds, ...(passwordMode ? { passwordMode } : {}) },
     addresses,
+    keyPassword,
     keySalts,
+    keyMaterialSource: text(bundle.keyMaterialSource) || (keyPassword ? "browser-key-password" : "key-salt"),
     cookies,
     client: normalizeClient(bundle.client),
   };
