@@ -35,12 +35,14 @@ test("cookie-session key material path caches imported salts and explains 9101",
   const verifySource = await read(verifyUrl);
   assert.match(provider, /import "\.\/key-material\.js"/);
   assert.match(verifySource, /import "\.\/key-material-session\.js"/);
+  assert.match(clientSource, /this\.auth\?\.KeyPassword/);
   assert.match(clientSource, /this\.auth\?\.KeySalts/);
   assert.match(clientSource, /\/core\/v4\/keys\/salts/);
   assert.match(clientSource, /protonCode\) === 9101/);
   assert.match(clientSource, /keySaltsRequired = true/);
   assert.match(sessionSource, /importMode: "key_salts_json"/);
-  assert.match(sessionSource, /client\.setAuth\(\{ \.\.\.client\.auth, KeySalts: salts \}\)/);
+  assert.match(sessionSource, /delete nextAuth\.KeyPassword/);
+  assert.match(sessionSource, /KeySalts: salts/);
 });
 
 test("cookie session status does not pretend to expose a RefreshToken", async () => {
@@ -48,10 +50,23 @@ test("cookie session status does not pretend to expose a RefreshToken", async ()
   assert.match(source, /status\.session\.cookieAuth = cookieAuth/);
   assert.match(source, /status\.session\.hasRefreshToken = !cookieAuth/);
   assert.match(source, /status\.session\.keySaltCount = keySaltCount/);
+  assert.match(source, /status\.session\.browserKeyPassword = browserKeyPassword/);
+  assert.match(source, /source: browserKeyPassword \? "browser-key-password"/);
 });
 
 test("provider includes Proton request path in user-visible error message", async () => {
   const provider = await read(providerUrl);
   assert.match(provider, /pathSuffix/);
   assert.match(provider, /body\?\.requestPath/);
+});
+
+
+test("imported browser keyPassword is preferred over KeySalt and raw password derivation", async () => {
+  const source = await read(keyMaterialUrl);
+  const imported = source.indexOf("const importedKeyPass");
+  const saltPath = source.indexOf("let salts = normalizeKeySalts", imported);
+  assert.ok(imported >= 0 && saltPath > imported);
+  assert.match(source.slice(imported, saltPath), /let keyPass = importedKeyPass/);
+  assert.match(source, /if \(!keyPass\) \{/);
+  assert.match(source, /if \(importedKeyPass\) throw new Error/);
 });
