@@ -133,7 +133,7 @@ function pageHtml(csrf, nonce) {
 
   <div class="card">
     <label>浏览器扩展（推荐）</label>
-    <div class="notice">扩展会自动获取 <code>AUTH</code>、<code>REFRESH</code>、<code>Session-Id</code> 和 <code>KeySalt</code>。提交前会显示导入内容，可先导出 JSON；只有确认后才会上传。</div>
+    <div class="notice">扩展会自动获取 <code>AUTH</code>、<code>REFRESH</code>、<code>Session-Id</code>，并从当前浏览器会话恢复 Proton 派生解密密钥。提交前会先预览；确认后才上传。</div>
     <div class="muted compact">使用方法：桌面 Chrome / Edge 登录 Proton Mail，同时保持本页已通过 Cloudflare Access 登录，然后打开扩展。</div>
   </div>
 
@@ -165,7 +165,7 @@ function pageHtml(csrf, nonce) {
 
       <label for="keySalts" style="margin-top:16px"><span class="step">3</span>KeySalt</label>
       <textarea id="keySalts" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder='粘贴 {"Code":1000,"KeySalts":[...]}'></textarea>
-      <div class="muted compact">仅手工排障需要。扩展会自动获取 KeySalt。</div>
+      <div class="muted compact">仅手工排障需要。正常扩展导入不再依赖 KeySalt。</div>
       <div class="actions"><button id="importKeySalts">导入 KeySalt</button><button id="clearKeySalts">清空</button></div>
     </details>
   </div>
@@ -179,7 +179,7 @@ function pageHtml(csrf, nonce) {
   </div>
 
   <div id="resultCard" class="card hidden"><label>操作结果</label><div id="result" class="result"></div></div>
-  <div class="footer">Session、Cookie 和 KeySalt 在 Worker 中加密保存；本页不写入 localStorage。</div>
+  <div class="footer">Session、Cookie 和解密材料在 Worker 中加密保存；本页不写入 localStorage。</div>
 </div>
 <script nonce="${nonce}">
 const csrf=${JSON.stringify(csrf)};const $=id=>document.getElementById(id);let busy=false;
@@ -201,7 +201,7 @@ function renderStatus(s){
   $('status').innerHTML=rowsHtml([
     ['Session',s.hasSession?'✅ 已保存':'❌ 未保存'],
     ['自动续期',refresh.verified?'✅ 已验证':refresh.capable?'待测试':'❌ 不完整'],
-    ['邮件解密',keys.imported?'✅ KeySalt 已保存':'❌ 缺少 KeySalt'],
+    ['邮件解密',keys.imported?'✅ 解密材料已保存':'❌ 缺少解密材料'],
     ['最后导入',fmtTime(session.importedAt)]
   ]);
   $('technicalStatus').innerHTML=rowsHtml([
@@ -210,6 +210,7 @@ function renderStatus(s){
     ['Session-Id',refresh.sessionIdCookieCount??s.transport?.sessionIdCookieCount],
     ['REFRESH',refresh.cookieCount??s.transport?.refreshCookieCount],
     ['Cookie 总数',s.transport?.cookieCount],
+    ['解密来源',keys.source],
     ['UID 尾号',session.uidSuffix],
     ['最后续期',fmtTime(refresh.lastAttemptAt)],
     ['续期结果',refresh.lastResult],
