@@ -49,9 +49,17 @@ ProtonSession.prototype.fetch = async function fetchWithKeySaltImport(request) {
           error.sessionAccountMismatch = true;
           throw error;
         }
-        client.setAuth({ ...client.auth, KeySalts: salts });
+        const nextAuth = { ...client.auth, KeySalts: salts };
+        delete nextAuth.KeyPassword;
+        client.setAuth(nextAuth);
         await this.persistClient(client);
-        await this.writeSessionMeta(client, { keySaltsImportedAt: Date.now(), keySaltCount: salts.length });
+        await this.writeSessionMeta(client, {
+          keyMaterialImportedAt: Date.now(),
+          keyMaterialSource: "key-salt",
+          keySaltsImportedAt: Date.now(),
+          keySaltCount: salts.length,
+          browserKeyPasswordImported: false,
+        });
         return Response.json({
           ok: true,
           data: {
